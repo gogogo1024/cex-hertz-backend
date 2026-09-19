@@ -7,6 +7,11 @@ import (
 	"github.com/gogogo1024/cex-hertz-backend/biz/model"
 )
 
+var (
+	// ErrEventNil 事件为 nil
+	ErrEventNil = errors.New("event cannot be nil")
+)
+
 // InMemoryEventLog 是一个简单的内存实现的事件日志
 // 用于测试和开发，生产环境应使用持久化版本（如 PostgreSQL）
 type InMemoryEventLog struct {
@@ -34,7 +39,7 @@ func NewInMemoryEventLog() *InMemoryEventLog {
 // AppendEvent 追加事件到日志
 func (el *InMemoryEventLog) AppendEvent(event model.MatchingEngineEvent) error {
 	if event == nil {
-		return errors.New("event cannot be nil")
+		return ErrEventNil
 	}
 
 	envelope, err := model.MarshalEvent(event)
