@@ -7,41 +7,40 @@ import (
 	"sync"
 
 	"github.com/cloudwego/hertz/pkg/common/hlog"
-
 )
 
 // RecoveryCheckpoint 恢复检查点的状态快照
 type RecoveryCheckpoint struct {
-	Timestamp        int64
-	LastEventSeq     uint64
-	OrderCount       int64
-	TradeCount       int64
-	OrderBook        interface{} // 订单簿
-	Positions        interface{} // 持仓
-	StateChecksum    string
-	BidLevels        int
-	AskLevels        int
-	TotalBidQty      int64
-	TotalAskQty      int64
+	Timestamp     int64
+	LastEventSeq  uint64
+	OrderCount    int64
+	TradeCount    int64
+	OrderBook     interface{} // 订单簿
+	Positions     interface{} // 持仓
+	StateChecksum string
+	BidLevels     int
+	AskLevels     int
+	TotalBidQty   int64
+	TotalAskQty   int64
 }
 
 // ValidationResult 验证结果
 type ValidationResult struct {
-	IsValid        bool
-	ChecksumMatch  bool
-	OrderCountOK   bool
-	TradeCountOK   bool
-	PositionsOK    bool
+	IsValid       bool
+	ChecksumMatch bool
+	OrderCountOK  bool
+	TradeCountOK  bool
+	PositionsOK   bool
 
 	// 详细的差异信息
-	ChecksumMismatch      string
-	OrderCountDifference  int64
-	TradeCountDifference  int64
-	PositionDiffs         map[string]string
+	ChecksumMismatch     string
+	OrderCountDifference int64
+	TradeCountDifference int64
+	PositionDiffs        map[string]string
 
 	// 完整的pre/post日志
-	PreState       string
-	PostState      string
+	PreState  string
+	PostState string
 }
 
 // StateValidator 状态验证器
@@ -122,7 +121,7 @@ func (sv *StateValidator) ValidateRecoveryState(
 	// 验证checksum
 	if preState.StateChecksum != postState.StateChecksum {
 		result.ChecksumMatch = false
-		result.ChecksumMismatch = fmt.Sprintf("pre=%s, post=%s", 
+		result.ChecksumMismatch = fmt.Sprintf("pre=%s, post=%s",
 			preState.StateChecksum, postState.StateChecksum)
 		hlog.Errorf("[StateValidator] Checksum mismatch: %s", result.ChecksumMismatch)
 	} else {

@@ -31,9 +31,9 @@ func TestCrashRecoveryFullCycle(t *testing.T) {
 
 	// Phase 1: 投入订单并触发交易
 	symbol := "BTC/USDT"
-	
+
 	t.Log("=== Phase 1: Processing Orders and Trades ===")
-	
+
 	// 投入10笔订单
 	orderCount := 10
 	tradeCount := 0
@@ -45,36 +45,36 @@ func TestCrashRecoveryFullCycle(t *testing.T) {
 
 	// 获取当前状态快照（crash前）
 	preState := &RecoveryCheckpoint{
-		Timestamp:      int64(time.Now().UnixMilli()),
-		LastEventSeq:   uint64(orderCount + tradeCount),
-		OrderCount:     int64(orderCount),
-		TradeCount:     int64(tradeCount),
-		OrderBook:      matchEngine.GetOrderBook(symbol),
-		Positions:      matchEngine.GetPositions(),
-		BidLevels:      5,
-		AskLevels:      5,
-		TotalBidQty:    1000000,
-		TotalAskQty:    1000000,
+		Timestamp:    int64(time.Now().UnixMilli()),
+		LastEventSeq: uint64(orderCount + tradeCount),
+		OrderCount:   int64(orderCount),
+		TradeCount:   int64(tradeCount),
+		OrderBook:    matchEngine.GetOrderBook(symbol),
+		Positions:    matchEngine.GetPositions(),
+		BidLevels:    5,
+		AskLevels:    5,
+		TotalBidQty:  1000000,
+		TotalAskQty:  1000000,
 	}
 	preState.StateChecksum = stateValidator.CalculateChecksum(preState.OrderBook, preState.Positions)
-	
+
 	t.Logf("Pre-crash state: seq=%d, orders=%d, trades=%d, checksum=%s",
 		preState.LastEventSeq, preState.OrderCount, preState.TradeCount, preState.StateChecksum)
 
 	// Phase 2: 保存检查点（模拟正常的checkpoint flush）
 	t.Log("=== Phase 2: Saving Checkpoints ===")
-	
+
 	err := checkpointMgr.FlushCheckpoints()
 	assert.NoError(t, err, "Failed to flush checkpoints")
-	
+
 	t.Log("Checkpoints flushed to database")
 
 	// Phase 3: 验证检查点已持久化
 	t.Log("=== Phase 3: Verifying Checkpoint Persistence ===")
-	
+
 	ctx, err := checkpointMgr.GetRecoveryContext("InMemoryEventLog", symbol)
 	assert.NoError(t, err, "Failed to get recovery context")
-	
+
 	if ctx != nil {
 		t.Logf("Recovery context retrieved: startSeq=%d, startOffset=%d",
 			ctx.StartEventSeq, ctx.StartKafkaOffset)
@@ -82,7 +82,7 @@ func TestCrashRecoveryFullCycle(t *testing.T) {
 
 	// Phase 4: 模拟crash（清空内存状态）
 	t.Log("=== Phase 4: Simulating Crash ===")
-	
+
 	// 在实际环境中，这里应该清空MatchEngine的内存状态
 	// 这里只是一个符号化的标记
 	crashPoint := preState.LastEventSeq
@@ -93,7 +93,7 @@ func TestCrashRecoveryFullCycle(t *testing.T) {
 
 	// Phase 5: 执行恢复
 	t.Log("=== Phase 5: Executing Recovery ===")
-	
+
 	recoveryOpts := &RecoveryOptions{
 		Strategy:              INCREMENTAL,
 		ProcessorNames:        []string{"InMemoryEventLog", "DatabaseProcessor", "PositionProcessor"},
@@ -112,18 +112,18 @@ func TestCrashRecoveryFullCycle(t *testing.T) {
 
 	// Phase 6: 验证恢复后的状态
 	t.Log("=== Phase 6: Validating Recovery State ===")
-	
+
 	postState := &RecoveryCheckpoint{
-		Timestamp:      int64(time.Now().UnixMilli()),
-		LastEventSeq:   preState.LastEventSeq, // 应该恢复到相同的seq
-		OrderCount:     preState.OrderCount,
-		TradeCount:     preState.TradeCount,
-		OrderBook:      matchEngine.GetOrderBook(symbol),
-		Positions:      matchEngine.GetPositions(),
-		BidLevels:      preState.BidLevels,
-		AskLevels:      preState.AskLevels,
-		TotalBidQty:    preState.TotalBidQty,
-		TotalAskQty:    preState.TotalAskQty,
+		Timestamp:    int64(time.Now().UnixMilli()),
+		LastEventSeq: preState.LastEventSeq, // 应该恢复到相同的seq
+		OrderCount:   preState.OrderCount,
+		TradeCount:   preState.TradeCount,
+		OrderBook:    matchEngine.GetOrderBook(symbol),
+		Positions:    matchEngine.GetPositions(),
+		BidLevels:    preState.BidLevels,
+		AskLevels:    preState.AskLevels,
+		TotalBidQty:  preState.TotalBidQty,
+		TotalAskQty:  preState.TotalAskQty,
 	}
 	postState.StateChecksum = stateValidator.CalculateChecksum(postState.OrderBook, postState.Positions)
 
@@ -142,7 +142,7 @@ func TestCrashRecoveryFullCycle(t *testing.T) {
 
 	// Phase 7: 验证幂等性
 	t.Log("=== Phase 7: Verifying Idempotency ===")
-	
+
 	// 再次执行恢复
 	result2, err := recoveryExec.ExecuteRecovery(context.Background(), recoveryOpts)
 	assert.NoError(t, err, "Second recovery execution failed")
@@ -150,8 +150,8 @@ func TestCrashRecoveryFullCycle(t *testing.T) {
 
 	// 计算恢复后的状态checksum
 	postState2 := &RecoveryCheckpoint{
-		OrderBook:  matchEngine.GetOrderBook(symbol),
-		Positions:  matchEngine.GetPositions(),
+		OrderBook: matchEngine.GetOrderBook(symbol),
+		Positions: matchEngine.GetPositions(),
 	}
 	postState2.StateChecksum = stateValidator.CalculateChecksum(postState2.OrderBook, postState2.Positions)
 
@@ -163,7 +163,7 @@ func TestCrashRecoveryFullCycle(t *testing.T) {
 
 	// Phase 8: 验证系统继续正常处理
 	t.Log("=== Phase 8: Post-Recovery Processing ===")
-	
+
 	// 在恢复后的状态上继续处理新事件
 	// 验证seq计数正常继续
 	expectedNextSeq := preState.LastEventSeq + 1
@@ -171,9 +171,9 @@ func TestCrashRecoveryFullCycle(t *testing.T) {
 
 	t.Log("=== Test Complete ===")
 	t.Log("Summary:")
-	t.Logf("  Pre-crash state:       seq=%d, orders=%d, trades=%d", 
+	t.Logf("  Pre-crash state:       seq=%d, orders=%d, trades=%d",
 		preState.LastEventSeq, preState.OrderCount, preState.TradeCount)
-	t.Logf("  Post-recovery state:   seq=%d, orders=%d, trades=%d", 
+	t.Logf("  Post-recovery state:   seq=%d, orders=%d, trades=%d",
 		postState.LastEventSeq, postState.OrderCount, postState.TradeCount)
 	t.Logf("  Recovery validation:   PASSED ✓")
 	t.Logf("  Idempotency check:     PASSED ✓")
@@ -202,11 +202,11 @@ func TestMultipleProcessorsRecovery(t *testing.T) {
 
 	// 保存pre-recovery state
 	preState := &RecoveryCheckpoint{
-		OrderCount:     int64(orderCount),
-		TradeCount:     int64(tradeCount),
-		LastEventSeq:   uint64(orderCount + tradeCount),
-		OrderBook:      matchEngine.GetOrderBook(symbol),
-		Positions:      matchEngine.GetPositions(),
+		OrderCount:   int64(orderCount),
+		TradeCount:   int64(tradeCount),
+		LastEventSeq: uint64(orderCount + tradeCount),
+		OrderBook:    matchEngine.GetOrderBook(symbol),
+		Positions:    matchEngine.GetPositions(),
 	}
 	preState.StateChecksum = stateValidator.CalculateChecksum(preState.OrderBook, preState.Positions)
 
@@ -287,12 +287,12 @@ func TestIdempotencyAfterRecovery(t *testing.T) {
 
 	// Phase 1: 处理事件并保存state
 	t.Log("Processing events...")
-	
+
 	preState := &RecoveryCheckpoint{
-		OrderCount:   50,
-		TradeCount:   75,
-		OrderBook:    matchEngine.GetOrderBook(symbol),
-		Positions:    matchEngine.GetPositions(),
+		OrderCount: 50,
+		TradeCount: 75,
+		OrderBook:  matchEngine.GetOrderBook(symbol),
+		Positions:  matchEngine.GetPositions(),
 	}
 	preState.StateChecksum = stateValidator.CalculateChecksum(preState.OrderBook, preState.Positions)
 
@@ -301,7 +301,7 @@ func TestIdempotencyAfterRecovery(t *testing.T) {
 
 	// Phase 2: 第一次恢复
 	t.Log("First recovery...")
-	
+
 	recoveryOpts := &RecoveryOptions{
 		Strategy:              INCREMENTAL,
 		ProcessorNames:        []string{"InMemoryEventLog"},
@@ -314,8 +314,8 @@ func TestIdempotencyAfterRecovery(t *testing.T) {
 	assert.NotNil(t, result1)
 
 	postState1 := &RecoveryCheckpoint{
-		OrderBook:  matchEngine.GetOrderBook(symbol),
-		Positions:  matchEngine.GetPositions(),
+		OrderBook: matchEngine.GetOrderBook(symbol),
+		Positions: matchEngine.GetPositions(),
 	}
 	postState1.StateChecksum = stateValidator.CalculateChecksum(postState1.OrderBook, postState1.Positions)
 
@@ -323,14 +323,14 @@ func TestIdempotencyAfterRecovery(t *testing.T) {
 
 	// Phase 3: 第二次恢复（验证幂等性）
 	t.Log("Second recovery (idempotency check)...")
-	
+
 	result2, err := recoveryExec.ExecuteRecovery(context.Background(), recoveryOpts)
 	assert.NoError(t, err)
 	assert.NotNil(t, result2)
 
 	postState2 := &RecoveryCheckpoint{
-		OrderBook:  matchEngine.GetOrderBook(symbol),
-		Positions:  matchEngine.GetPositions(),
+		OrderBook: matchEngine.GetOrderBook(symbol),
+		Positions: matchEngine.GetPositions(),
 	}
 	postState2.StateChecksum = stateValidator.CalculateChecksum(postState2.OrderBook, postState2.Positions)
 
@@ -342,13 +342,13 @@ func TestIdempotencyAfterRecovery(t *testing.T) {
 
 	// Phase 4: 第三次恢复（再次验证幂等性）
 	t.Log("Third recovery (re-verify idempotency)...")
-	
+
 	result3, err := recoveryExec.ExecuteRecovery(context.Background(), recoveryOpts)
 	assert.NoError(t, err)
 
 	postState3 := &RecoveryCheckpoint{
-		OrderBook:  matchEngine.GetOrderBook(symbol),
-		Positions:  matchEngine.GetPositions(),
+		OrderBook: matchEngine.GetOrderBook(symbol),
+		Positions: matchEngine.GetPositions(),
 	}
 	postState3.StateChecksum = stateValidator.CalculateChecksum(postState3.OrderBook, postState3.Positions)
 
@@ -365,9 +365,9 @@ func setupTestMatchEngine(t *testing.T) *PartitionAwareMatchEngine {
 	// TODO: 实现真实的MatchEngine创建逻辑
 	// 现在返回nil（需要与实际的MatchEngine初始化整合）
 	t.Logf("Setting up test MatchEngine...")
-	
+
 	// 这里应该返回一个初始化的MatchEngine
 	// 包括EventLog、Checkpoint、所有Processor等
-	
+
 	return nil // Placeholder
 }

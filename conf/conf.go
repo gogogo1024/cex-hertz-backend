@@ -101,6 +101,7 @@ type Config struct {
 	Kafka       Kafka       `mapstructure:"kafka" yaml:"kafka"`
 	MatchEngine MatchEngine `mapstructure:"match_engine" yaml:"match_engine"`
 	Registry    Registry    `mapstructure:"registry" yaml:"registry"`
+	Recovery    Recovery    `mapstructure:"recovery" yaml:"recovery"`
 }
 
 type MySQL struct {
@@ -144,6 +145,16 @@ type Hertz struct {
 	RegistryAddr    string `mapstructure:"registry_addr" yaml:"registry_addr"`
 	MetricsPort     string `mapstructure:"metrics_port" yaml:"metrics_port"`
 	WsPort          string `mapstructure:"ws_port" yaml:"ws_port"`
+}
+
+// Recovery 恢复配置
+type Recovery struct {
+	EnableAutoRecovery   bool   `mapstructure:"enable_auto_recovery" yaml:"enable_auto_recovery"`
+	RecoveryTimeout      int    `mapstructure:"recovery_timeout_seconds" yaml:"recovery_timeout_seconds"`
+	Strategy             string `mapstructure:"strategy" yaml:"strategy"`
+	ValidateAfterRecovery bool  `mapstructure:"validate_after_recovery" yaml:"validate_after_recovery"`
+	CheckpointRetentionDays int `mapstructure:"checkpoint_retention_days" yaml:"checkpoint_retention_days"`
+	MaxRetries           int    `mapstructure:"max_retries" yaml:"max_retries"`
 }
 
 // GetConf gets configuration instance

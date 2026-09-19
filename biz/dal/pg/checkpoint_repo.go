@@ -180,3 +180,98 @@ func formatDuration(d time.Duration) string {
 	}
 	return fmt.Sprintf("%.1fh", d.Hours())
 }
+
+// Phase 2.7: 恢复状态管理方法
+
+// MarkRecoveryInProgress 标记恢复开始
+func (r *CheckpointRepo) MarkRecoveryInProgress(processorName, symbol string) error {
+	now := time.Now()
+	result := r.db.Model(&model.EventOffsetCheckpoint{}).
+		Where("processor_name = ? AND symbol = ?", processorName, symbol).
+		Updates(map[string]interface{}{
+			"recovery_status":     "in_progress",
+			"recovery_start_time": now,
+			"recovery_error":      "", // 清除旧的错误信息
+		})
+
+	if result.Error != nil {
+		hlog.Errorf("[CheckpointRepo] Failed to mark recovery in progress: %v", result.Error)
+		return result.Error
+	}
+
+	hlog.Debugf("[CheckpointRepo] Marked recovery in_progress: %s:%s", processorName, symbol)
+	return nil
+}
+
+// MarkRecoveryComplete 标记恢复完成
+func (r *CheckpointRepo) MarkRecoveryComplete(processorName, symbol string) error {
+	now := time.Now()
+	result := r.db.Model(&model.EventOffsetCheckpoint{}).
+		Where("processor_name = ? AND symbol = ?", processorName, symbol).
+		Updates(map[string]interface{}{
+			"recovery_status":   "complete",
+			"recovery_end_time": now,
+		})
+
+	if result.Error != nil {
+		hlog.Errorf("[CheckpointRepo] Failed to mark recovery complete: %v", result.Error)
+		return result.Error
+	}
+
+	hlog.Infof("[CheckpointRepo] Marked recovery complete: %s:%s", processorName, symbol)
+	return nil
+}
+
+// MarkRecoveryFailed 标记恢复失败
+func (r *CheckpointRepo) MarkRecoveryFailed(processorName, symbol, errorMsg string) error {
+	now := time.Now()
+	result := r.db.Model(&model.EventOffsetCheckpoint{}).
+		Where("processor_name = ? AND symbol = ?", processorName, symbol).
+		Updates(map[string]interface{}{
+			"recovery_status":   "failed",
+			"recovery_end_time": now,
+			"recovery_error":    errorMsg,
+		})
+
+	if result.Error != nil {
+		hlog.Errorf("[CheckpointRepo] Failed to mark recovery failed: %v", result.Error)
+		return result.Error
+	}
+
+	hlog.Errorf("[CheckpointRepo] Marked recovery failed: %s:%s, error=%s", processorName, symbol, errorMsg)
+	return nil
+}
+
+// GetRecoveryStatus 获取恢复状态
+func (r *CheckpointRepo) GetRecoveryStatus(processorName, symbol string) (string, error) {
+	var cp model.EventOffsetCheckpoint
+
+	result := r.db.
+		Where("processor_name = ? AND symbol = ?", processorName, symbol).
+		First(&cp)
+
+	if result.Error != nil {
+		if result.Error == gorm.ErrRecordNotFound {
+			return "none", nil
+		}
+		return "", result.Error
+	}
+
+	return cp.RecoveryStatus, nil
+}
+
+// ListFailedRecoveries 列出所有失败的恢复 (用于监控和告警)
+func (r *CheckpointRepo) ListFailedRecoveries() ([]model.EventOffsetCheckpoint, error) {
+	var checkpoints []model.EventOffsetCheckpoint
+
+	result := r.db.
+		Where("recovery_status = ?", "failed").
+		Order("recovery_end_time DESC").
+		Find(&checkpoints)
+
+	if result.Error != nil {
+		return nil, result.Error
+	}
+
+	return checkpoints, nil
+}

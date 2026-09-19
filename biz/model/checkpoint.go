@@ -17,6 +17,11 @@ type EventOffsetCheckpoint struct {
 	StateChecksum string    `gorm:"type:varchar(64)" json:"state_checksum"`     // 状态校验和 (用于恢复验证)
 	OrderCount    int64     `json:"order_count"`                                // 当前orderbook中的订单数
 	TradeCount    int64     `json:"trade_count"`                                // 累计成交笔数
+	// Phase 2.7: 恢复状态跟踪字段
+	RecoveryStatus    string    `gorm:"index:idx_recovery_status;type:varchar(20);default:'none'" json:"recovery_status"`  // 'none', 'in_progress', 'complete', 'failed'
+	RecoveryStartTime *time.Time `gorm:"index" json:"recovery_start_time"`  // 恢复开始时间
+	RecoveryEndTime   *time.Time `gorm:"index" json:"recovery_end_time"`    // 恢复结束时间
+	RecoveryError     string    `gorm:"type:text" json:"recovery_error"`     // 恢复错误信息
 	CreatedAt     time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt     time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }

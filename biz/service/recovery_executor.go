@@ -15,8 +15,8 @@ import (
 type RecoveryStrategy string
 
 const (
-	FULL_REPLAY    RecoveryStrategy = "full_replay"    // 从初始状态重放所有事件
-	INCREMENTAL    RecoveryStrategy = "incremental"    // 只重放crash后的事件
+	FULL_REPLAY RecoveryStrategy = "full_replay" // 从初始状态重放所有事件
+	INCREMENTAL RecoveryStrategy = "incremental" // 只重放crash后的事件
 )
 
 // RecoveryOptions 恢复选项
@@ -49,17 +49,17 @@ type RecoveryResult struct {
 	RecoveryEnd   time.Time
 
 	// 恢复统计
-	EventsReplayed     int64
-	OrdersRestored     int64
-	TradesRestored     int64
+	EventsReplayed int64
+	OrdersRestored int64
+	TradesRestored int64
 
 	// 恢复前后状态
-	PreCrashChecksum   string
+	PreCrashChecksum     string
 	PostRecoveryChecksum string
 
 	// 验证结果
-	IsValid           bool
-	ValidationError   error
+	IsValid         bool
+	ValidationError error
 }
 
 // RecoveryStats 恢复统计信息
@@ -73,15 +73,15 @@ type RecoveryStats struct {
 
 // RecoveryExecutor 恢复执行器
 type RecoveryExecutor struct {
-	matchEngine      *PartitionAwareMatchEngine
-	checkpointMgr    *CheckpointManager
-	eventLog         model.EventStore
-	stateValidator   *StateValidator
+	matchEngine    *PartitionAwareMatchEngine
+	checkpointMgr  *CheckpointManager
+	eventLog       model.EventStore
+	stateValidator *StateValidator
 
-	mu                sync.RWMutex
-	stats             *RecoveryStats
-	lastRecoveryTime  time.Time
-	isRecovering      atomic.Bool
+	mu               sync.RWMutex
+	stats            *RecoveryStats
+	lastRecoveryTime time.Time
+	isRecovering     atomic.Bool
 }
 
 // NewRecoveryExecutor 创建恢复执行器
@@ -91,11 +91,11 @@ func NewRecoveryExecutor(
 	eventLog model.EventStore,
 ) *RecoveryExecutor {
 	return &RecoveryExecutor{
-		matchEngine:     matchEngine,
-		checkpointMgr:   checkpointMgr,
-		eventLog:        eventLog,
-		stateValidator:  NewStateValidator(),
-		stats:           &RecoveryStats{},
+		matchEngine:      matchEngine,
+		checkpointMgr:    checkpointMgr,
+		eventLog:         eventLog,
+		stateValidator:   NewStateValidator(),
+		stats:            &RecoveryStats{},
 		lastRecoveryTime: time.Now(),
 	}
 }
@@ -146,10 +146,10 @@ func (re *RecoveryExecutor) ExecuteRecovery(ctx context.Context, opts *RecoveryO
 	if len(pendingList) == 0 {
 		hlog.Infof("[RecoveryExecutor] No pending recovery items found")
 		return &RecoveryResult{
-			IsValid:           true,
-			RecoveryStart:     startTime,
-			RecoveryEnd:       time.Now(),
-			EventsReplayed:    0,
+			IsValid:        true,
+			RecoveryStart:  startTime,
+			RecoveryEnd:    time.Now(),
+			EventsReplayed: 0,
 		}, nil
 	}
 
@@ -167,12 +167,12 @@ func (re *RecoveryExecutor) ExecuteRecovery(ctx context.Context, opts *RecoveryO
 
 			result, err := re.recoverSingleProcessor(ctx, recoveryItem, opts)
 			if err != nil {
-				hlog.Errorf("[RecoveryExecutor] Recovery failed for %s:%s: %v", 
+				hlog.Errorf("[RecoveryExecutor] Recovery failed for %s:%s: %v",
 					recoveryItem.processorName, recoveryItem.symbol, err)
 				result = &RecoveryResult{
-					ProcessorName: recoveryItem.processorName,
-					Symbol:        recoveryItem.symbol,
-					IsValid:       false,
+					ProcessorName:   recoveryItem.processorName,
+					Symbol:          recoveryItem.symbol,
+					IsValid:         false,
 					ValidationError: err,
 				}
 			}
@@ -228,9 +228,9 @@ func (re *RecoveryExecutor) recoverSingleProcessor(
 	opts *RecoveryOptions,
 ) (*RecoveryResult, error) {
 	result := &RecoveryResult{
-		ProcessorName:     item.processorName,
-		Symbol:            item.symbol,
-		RecoveryStart:     time.Now(),
+		ProcessorName: item.processorName,
+		Symbol:        item.symbol,
+		RecoveryStart: time.Now(),
 	}
 
 	// Step 1: 获取恢复上下文
@@ -248,7 +248,7 @@ func (re *RecoveryExecutor) recoverSingleProcessor(
 
 	result.PreCrashChecksum = recoveryCtx.PreCrashChecksum
 
-	hlog.Infof("[RecoveryExecutor] Recovering %s:%s from seq=%d", 
+	hlog.Infof("[RecoveryExecutor] Recovering %s:%s from seq=%d",
 		item.processorName, item.symbol, recoveryCtx.StartEventSeq)
 
 	// Step 2: 获取需要重放的事件
@@ -270,7 +270,7 @@ func (re *RecoveryExecutor) recoverSingleProcessor(
 		}
 	}
 
-	hlog.Infof("[RecoveryExecutor] Got %d events to replay for %s:%s", 
+	hlog.Infof("[RecoveryExecutor] Got %d events to replay for %s:%s",
 		len(events), item.processorName, item.symbol)
 
 	// Step 3: 重放事件
@@ -323,11 +323,11 @@ func (re *RecoveryExecutor) recoverSingleProcessor(
 		if !isValid {
 			result.ValidationError = fmt.Errorf(errMsg)
 			result.IsValid = false
-			hlog.Errorf("[RecoveryExecutor] Validation failed for %s:%s: %s", 
+			hlog.Errorf("[RecoveryExecutor] Validation failed for %s:%s: %s",
 				item.processorName, item.symbol, errMsg)
 		} else {
 			result.IsValid = true
-			hlog.Infof("[RecoveryExecutor] Validation passed for %s:%s", 
+			hlog.Infof("[RecoveryExecutor] Validation passed for %s:%s",
 				item.processorName, item.symbol)
 		}
 	} else {
@@ -358,7 +358,7 @@ func (re *RecoveryExecutor) getPendingRecoveryList(opts *RecoveryOptions) ([]*re
 			for _, symbol := range opts.Symbols {
 				ctx, err := re.checkpointMgr.GetRecoveryContext(procName, symbol)
 				if err != nil {
-					hlog.Warnf("[RecoveryExecutor] Failed to get recovery context for %s:%s: %v", 
+					hlog.Warnf("[RecoveryExecutor] Failed to get recovery context for %s:%s: %v",
 						procName, symbol, err)
 					continue
 				}
@@ -375,8 +375,6 @@ func (re *RecoveryExecutor) getPendingRecoveryList(opts *RecoveryOptions) ([]*re
 
 	return pendingList, nil
 }
-
-
 
 // GetRecoveryStats 获取恢复统计信息
 func (re *RecoveryExecutor) GetRecoveryStats() *RecoveryStats {

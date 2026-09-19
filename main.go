@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -40,9 +41,19 @@ func main() {
 	defer kafka.CloseAllWriters() // Event Sourcing V2: 关闭Kafka Writers
 	consulClient := initConsul(cfg)
 	h := initHertzServer(cfg, consulClient)
-	wsServer, pm, localAddr := initBusiness(cfg, h)
+	wsServer, pm, localAddr, matchEngine := initBusiness(cfg, h)
 	defer h.Shutdown(context.Background())
 	defer wsServer.Shutdown(context.Background())
+
+	// Phase 2.5: 启动恢复检测与执行
+	if cfg.Recovery.EnableAutoRecovery {
+		if err := initRecovery(context.Background(), cfg, matchEngine); err != nil {
+			hlog.Warnf("[main] 恢复执行失败，继续启动: %v", err)
+		} else {
+			hlog.Infof("[main] 恢复检测完成")
+		}
+	}
+
 	startBackgroundTasks(cfg, pm, consulClient, localAddr)
 	registerMiddleware(h)
 	registerRoutes(h)
@@ -78,7 +89,7 @@ func initHertzServer(cfg *conf.Config, consulClient *consulapi.Client) *server.H
 	return h
 }
 
-func initBusiness(cfg *conf.Config, h *server.Hertz) (*server.Hertz, *service.PartitionManager, string) {
+func initBusiness(cfg *conf.Config, h *server.Hertz) (*server.Hertz, *service.PartitionManager, string, *service.PartitionAwareMatchEngine) {
 	hsPort := cfg.Hertz.WsPort
 	if len(hsPort) > 0 && hsPort[0] == ':' {
 		hsPort = hsPort[1:]
@@ -110,7 +121,65 @@ func initBusiness(cfg *conf.Config, h *server.Hertz) (*server.Hertz, *service.Pa
 	matchEngine := service.NewPartitionAwareMatchEngine(pm, localAddr, broadcaster, unicast)
 	cexserver.InjectEngine(matchEngine)
 	service.MatchResultPusher = cexserver.PushMatchResult
-	return wsServer, pm, localAddr
+	return wsServer, pm, localAddr, matchEngine
+}
+
+// Phase 2.5: 恢复启动函数
+func initRecovery(ctx context.Context, cfg *conf.Config, matchEngine *service.PartitionAwareMatchEngine) error {
+	if matchEngine == nil {
+		return fmt.Errorf("matchEngine is nil")
+	}
+
+	recoveryExecutor := service.NewRecoveryExecutor(
+		matchEngine,
+		matchEngine.GetCheckpointManager(),
+		matchEngine.GetEventLog(),
+	)
+
+	// 创建恢复上下文
+	timeout := time.Duration(cfg.Recovery.RecoveryTimeout) * time.Second
+	if timeout == 0 {
+		timeout = 30 * time.Second // 默认30秒
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	// 检测是否需要恢复
+	shouldRecover, err := recoveryExecutor.ShouldRecover(ctx)
+	if err != nil {
+		hlog.Warnf("[initRecovery] 检测恢复状态失败: %v", err)
+		return err
+	}
+
+	if !shouldRecover {
+		hlog.Infof("[initRecovery] 无需恢复")
+		return nil
+	}
+
+	hlog.Infof("[initRecovery] 检测到需要恢复，开始执行恢复")
+
+	// 执行恢复
+	opts := &service.RecoveryOptions{
+		Strategy:              service.INCREMENTAL,
+		ValidateAfterRecovery: cfg.Recovery.ValidateAfterRecovery,
+		MaxRetries:            cfg.Recovery.MaxRetries,
+	}
+
+	result, err := recoveryExecutor.ExecuteRecovery(ctx, opts)
+	if err != nil {
+		hlog.Errorf("[initRecovery] 恢复执行失败: %v", err)
+		return err
+	}
+
+	if result != nil {
+		hlog.Infof("[initRecovery] 恢复完成: 处理器=%s, 符号=%s, 状态验证=%v",
+			result.ProcessorName, result.Symbol, result.IsValid)
+	} else {
+		hlog.Warnf("[initRecovery] 恢复结果为nil")
+	}
+
+	return nil
 }
 
 func startBackgroundTasks(cfg *conf.Config, pm *service.PartitionManager, consulClient *consulapi.Client, localAddr string) {

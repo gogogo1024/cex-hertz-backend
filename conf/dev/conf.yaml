@@ -40,3 +40,12 @@ match_engine:
   node_id: "node-1"
   match_symbols: "BTCUSDT,ETHUSDT"
   match_port: 9997
+
+# Phase 2.6: 恢复配置
+recovery:
+  enable_auto_recovery: true
+  recovery_timeout_seconds: 30
+  strategy: "incremental"  # full_replay 或 incremental
+  validate_after_recovery: true
+  checkpoint_retention_days: 7
+  max_retries: 3
