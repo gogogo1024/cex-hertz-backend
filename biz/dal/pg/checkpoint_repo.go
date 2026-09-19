@@ -275,3 +275,24 @@ func (r *CheckpointRepo) ListFailedRecoveries() ([]model.EventOffsetCheckpoint, 
 
 	return checkpoints, nil
 }
+
+// ListPendingRecoveryItems 列出所有待恢复项 (启动时调用，用于自动发现需要恢复的symbols)
+// 返回所有 recovery_status = 'in_progress' 或 recovery_status = 'failed' 的项
+// (这些表示恢复进行中或之前失败了，需要重新尝试)
+func (r *CheckpointRepo) ListPendingRecoveryItems() ([]model.EventOffsetCheckpoint, error) {
+	var checkpoints []model.EventOffsetCheckpoint
+
+	// 只查询 in_progress 和 failed 状态的项
+	result := r.db.
+		Where("recovery_status IN (?, ?)", "in_progress", "failed").
+		Order("updated_at DESC").
+		Find(&checkpoints)
+
+	if result.Error != nil {
+		hlog.Errorf("[CheckpointRepo] Failed to list pending recovery items: %v", result.Error)
+		return nil, result.Error
+	}
+
+	hlog.Infof("[CheckpointRepo] Found %d pending recovery items", len(checkpoints))
+	return checkpoints, nil
+}

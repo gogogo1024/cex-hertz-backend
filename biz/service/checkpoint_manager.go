@@ -158,3 +158,22 @@ func (cm *CheckpointManager) ListCheckpoints(limit int) ([]model.EventOffsetChec
 func (cm *CheckpointManager) CleanupOldCheckpoints(keepDays int) error {
 	return cm.repo.DeleteOldCheckpoints(keepDays)
 }
+
+// ListPendingRecoveryItems 列出所有待恢复项（启动自动恢复时调用）
+// 返回所有需要恢复的 (processorName, symbol) 对
+func (cm *CheckpointManager) ListPendingRecoveryItems() ([]map[string]string, error) {
+	checkpoints, err := cm.repo.ListPendingRecoveryItems()
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]map[string]string, 0, len(checkpoints))
+	for _, cp := range checkpoints {
+		result = append(result, map[string]string{
+			"processor_name": cp.ProcessorName,
+			"symbol":         cp.Symbol,
+		})
+	}
+
+	return result, nil
+}

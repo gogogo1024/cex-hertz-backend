@@ -8,8 +8,8 @@ import (
 // 用于crash recovery时从正确的offset重放事件
 type EventOffsetCheckpoint struct {
 	ID            int64  `gorm:"primaryKey" json:"id"`
-	ProcessorName string `gorm:"index:idx_processor;type:varchar(100)" json:"processor_name"`
-	Symbol        string `gorm:"index:idx_symbol;type:varchar(50)" json:"symbol"`
+	ProcessorName string `gorm:"uniqueIndex:idx_processor_symbol;index:idx_processor;type:varchar(100)" json:"processor_name"`
+	Symbol        string `gorm:"uniqueIndex:idx_processor_symbol;index:idx_symbol;type:varchar(50)" json:"symbol"`
 	EventSeq      uint64 `gorm:"index:idx_event_seq" json:"event_seq"`       // 最后成功处理的event seq
 	KafkaOffset   int64  `gorm:"index:idx_kafka_offset" json:"kafka_offset"` // Kafka中的offset
 	PartitionID   int32  `gorm:"index:idx_partition" json:"partition_id"`    // Kafka分区ID
@@ -48,6 +48,8 @@ type RecoveryContext struct {
 	ProcessorName       string
 	StartEventSeq       uint64 // 从哪个seq开始重放
 	StartKafkaOffset    int64  // 从Kafka的哪个offset开始消费
+	Topic               string // Kafka topic (用于恢复时重建EventContext)
+	Partition           int32  // Kafka partition (用于恢复时重建EventContext)
 	PreCrashChecksum    string // crash前的校验和（用于验证恢复后的一致性）
 	ExpectedOrderCount  int64
 	ExpectedTradeCount  int64

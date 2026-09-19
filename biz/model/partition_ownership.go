@@ -35,13 +35,13 @@ const (
 // String 返回状态的字符串表示
 func (s OwnershipState) String() string {
 	states := map[OwnershipState]string{
-		Owned:              "Owned",
-		MigrationPending:   "MigrationPending",
-		Frozen:             "Frozen",
-		Flushing:           "Flushing",
-		Transferring:       "Transferring",
-		Standby:            "Standby",
-		Failed:             "Failed",
+		Owned:            "Owned",
+		MigrationPending: "MigrationPending",
+		Frozen:           "Frozen",
+		Flushing:         "Flushing",
+		Transferring:     "Transferring",
+		Standby:          "Standby",
+		Failed:           "Failed",
 	}
 	if name, ok := states[s]; ok {
 		return name
@@ -136,10 +136,10 @@ func NewOwnershipStateMachine(partitionID, owner string, symbols []string) *Owne
 			TransitionHistory:   make([]StateTransition, 0),
 			Version:             1,
 		},
-		guards:               make(map[StateTransition]func() (bool, error)),
-		actions:              make(map[StateTransition]func() error),
-		listeners:            make([]OwnershipListener, 0),
-		migrationTimeout:     30 * time.Second,
+		guards:           make(map[StateTransition]func() (bool, error)),
+		actions:          make(map[StateTransition]func() error),
+		listeners:        make([]OwnershipListener, 0),
+		migrationTimeout: 30 * time.Second,
 	}
 
 	// 注册所有状态转移的 guards 和 actions

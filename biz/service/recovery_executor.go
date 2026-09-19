@@ -72,11 +72,48 @@ type RecoveryStats struct {
 }
 
 // RecoveryExecutor 恢复执行器
+//
+// ===== 关键设计要点 =====
+// 1. Kafka Offset 追踪：通过 EventPipeline.GetProcessorKafkaOffset() 获取最后的处理位置
+// 2. 恢复起点确定：lastKafkaOffset + 1（确保不重不漏）
+// 3. 完整的元数据链：Kafka Offset → Event Seq → Processor Side Effect → Checkpoint
+// 4. 分布式锁保护：使用 RedisLockManager 防止并发恢复同一个symbol
+//
+// ===== 恢复流程 =====
+// Step 1: 获取最后的 Kafka offset
+//
+//	processor.GetProcessorKafkaOffset(processorName, symbol)
+//	  返回：lastProcessedKafkaOffset（上次成功处理的位置）
+//
+// Step 2: 确定恢复起点
+//
+//	startOffset = lastProcessedKafkaOffset + 1
+//
+// Step 3: 从 Kafka 重新消费
+//
+//	events := kafkaConsumer.Fetch(startOffset)
+//
+// Step 4: 使用 ProcessEventWithContext 重放（在分布式锁保护下）
+//
+//	for each event {
+//	    eventCtx := model.NewEventContext(event, topic, partition, offset)
+//	    processor.ProcessEventWithContext(eventCtx)
+//	}
+//
+// ===== 数据一致性保证 =====
+// - Kafka offset 与 Event seq 通过 checkpoint 建立 1:1 映射
+// - 恢复时从确切的 Kafka offset 开始，不会重复或遗漏
+// - EventSeq 全局唯一，支持检测重复事件
+// - 分布式锁保证同一时刻只有一个节点恢复某个symbol
+//
+// ===== 相关文档 =====
+// 详见：doc/KAFKA_AWARE_EVENTPIPELINE_DESIGN.md
 type RecoveryExecutor struct {
 	matchEngine    *PartitionAwareMatchEngine
 	checkpointMgr  *CheckpointManager
 	eventLog       model.EventStore
 	stateValidator *StateValidator
+	lockMgr        *RedisLockManager  // 分布式锁管理器
 
 	mu               sync.RWMutex
 	stats            *RecoveryStats
@@ -89,32 +126,78 @@ func NewRecoveryExecutor(
 	matchEngine *PartitionAwareMatchEngine,
 	checkpointMgr *CheckpointManager,
 	eventLog model.EventStore,
+	lockMgr *RedisLockManager,
 ) *RecoveryExecutor {
 	return &RecoveryExecutor{
 		matchEngine:      matchEngine,
 		checkpointMgr:    checkpointMgr,
 		eventLog:         eventLog,
 		stateValidator:   NewStateValidator(),
+		lockMgr:          lockMgr,
 		stats:            &RecoveryStats{},
 		lastRecoveryTime: time.Now(),
 	}
 }
 
-// ShouldRecover 检查是否需要恢复 (启动时调用)
+// ShouldRecover 检查是否需要恢复
+// 用途：监控检查、调试、或需要提前知道恢复状态的场景
+// 注意：启动流程中已使用 ExecuteRecovery()，不再需要此方法（避免重复查询）
+// 此方法会查询数据库一次，仅用于快速检查
 func (re *RecoveryExecutor) ShouldRecover(ctx context.Context) (bool, error) {
-	// 检查是否有未完成的恢复
-	// 或者检查checkpoint中是否有pending的recovery记录
-
-	// 对于现在的简单实现，我们检查是否有最近的checkpoint
-	// 如果有checkpoint但EventLog是空的，说明需要恢复
-
-	if re.eventLog == nil {
+	if re.checkpointMgr == nil {
 		return false, nil
 	}
 
-	// TODO: 实现具体的检查逻辑
-	// 现在简单返回false，表示不需要恢复
-	return false, nil
+	// 列出所有待恢复项
+	pendingItems, err := re.checkpointMgr.ListPendingRecoveryItems()
+	if err != nil {
+		hlog.Errorf("[RecoveryExecutor] Failed to list pending recovery items: %v", err)
+		return false, err
+	}
+
+	// 如果有待恢复项，表示需要恢复
+	hasRecoveryNeeded := len(pendingItems) > 0
+
+	if hasRecoveryNeeded {
+		hlog.Warnf("[RecoveryExecutor] Found %d pending recovery items, recovery needed", len(pendingItems))
+		for _, item := range pendingItems {
+			hlog.Infof("[RecoveryExecutor] Pending recovery: %s:%s",
+				item["processor_name"], item["symbol"])
+		}
+	} else {
+		hlog.Debugf("[RecoveryExecutor] No pending recovery items found")
+	}
+
+	return hasRecoveryNeeded, nil
+}
+
+// ShouldRecoverWithList 一次查询同时获取是否需要恢复和待恢复项列表
+// 用途：监控面板、调试工具、或需要看详细列表的场景
+// 注意：启动流程中已使用 ExecuteRecovery()，不再需要此方法（避免重复查询）
+// 返回: (needsRecovery, pendingItems, error)
+func (re *RecoveryExecutor) ShouldRecoverWithList(ctx context.Context) (bool, []map[string]string, error) {
+	if re.checkpointMgr == nil {
+		return false, nil, nil
+	}
+
+	// 一次查询获取所有信息
+	pendingItems, err := re.checkpointMgr.ListPendingRecoveryItems()
+	if err != nil {
+		hlog.Errorf("[RecoveryExecutor] Failed to list pending recovery items: %v", err)
+		return false, nil, err
+	}
+
+	hasRecoveryNeeded := len(pendingItems) > 0
+
+	if hasRecoveryNeeded {
+		hlog.Warnf("[RecoveryExecutor] Found %d pending recovery items, recovery needed", len(pendingItems))
+		for _, item := range pendingItems {
+			hlog.Infof("[RecoveryExecutor] Pending recovery: %s:%s",
+				item["processor_name"], item["symbol"])
+		}
+	}
+
+	return hasRecoveryNeeded, pendingItems, nil
 }
 
 // ExecuteRecovery 执行恢复流程
@@ -222,6 +305,7 @@ func (re *RecoveryExecutor) ExecuteRecovery(ctx context.Context, opts *RecoveryO
 }
 
 // recoverSingleProcessor 恢复单个处理器
+// 使用分布式锁防止并发恢复
 func (re *RecoveryExecutor) recoverSingleProcessor(
 	ctx context.Context,
 	item *recoveryItem,
@@ -233,126 +317,142 @@ func (re *RecoveryExecutor) recoverSingleProcessor(
 		RecoveryStart: time.Now(),
 	}
 
-	// Step 1: 获取恢复上下文
-	recoveryCtx, err := re.checkpointMgr.GetRecoveryContext(item.processorName, item.symbol)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get recovery context: %v", err)
-	}
-
-	if recoveryCtx == nil {
-		// 第一次处理，无需恢复
-		result.IsValid = true
-		result.RecoveryEnd = time.Now()
-		return result, nil
-	}
-
-	result.PreCrashChecksum = recoveryCtx.PreCrashChecksum
-
-	hlog.Infof("[RecoveryExecutor] Recovering %s:%s from seq=%d",
-		item.processorName, item.symbol, recoveryCtx.StartEventSeq)
-
-	// Step 2: 获取需要重放的事件
-	var events []model.MatchingEngineEvent
-	if re.eventLog != nil {
-		envs, err := re.eventLog.GetEventsBySymbol(recoveryCtx.Symbol, recoveryCtx.StartEventSeq, 1000)
+	// 使用分布式锁保护恢复过程
+	// 防止多个节点同时恢复同一个symbol
+	return result, re.lockMgr.WithRecoveryLock(ctx, item.processorName, item.symbol, func(ctx context.Context) error {
+		// Step 1: 获取恢复上下文
+		recoveryCtx, err := re.checkpointMgr.GetRecoveryContext(item.processorName, item.symbol)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get events for replay: %v", err)
+			return fmt.Errorf("failed to get recovery context: %v", err)
 		}
-		for _, env := range envs {
-			if env != nil {
-				event, err := model.UnmarshalEvent(env)
-				if err != nil {
-					hlog.Warnf("[RecoveryExecutor] Failed to unmarshal event: %v", err)
-					continue
+
+		if recoveryCtx == nil {
+			// 第一次处理，无需恢复
+			result.IsValid = true
+			result.RecoveryEnd = time.Now()
+			return nil
+		}
+
+		result.PreCrashChecksum = recoveryCtx.PreCrashChecksum
+
+		hlog.Infof("[RecoveryExecutor] Recovering %s:%s from seq=%d (with distributed lock)",
+			item.processorName, item.symbol, recoveryCtx.StartEventSeq)
+
+		// Step 2: 获取需要重放的事件
+		var events []model.MatchingEngineEvent
+		if re.eventLog != nil {
+			envs, err := re.eventLog.GetEventsBySymbol(recoveryCtx.Symbol, recoveryCtx.StartEventSeq, 1000)
+			if err != nil {
+				return fmt.Errorf("failed to get events for replay: %v", err)
+			}
+			for _, env := range envs {
+				if env != nil {
+					event, err := model.UnmarshalEvent(env)
+					if err != nil {
+						hlog.Warnf("[RecoveryExecutor] Failed to unmarshal event: %v", err)
+						continue
+					}
+					events = append(events, event)
 				}
-				events = append(events, event)
 			}
 		}
-	}
 
-	hlog.Infof("[RecoveryExecutor] Got %d events to replay for %s:%s",
-		len(events), item.processorName, item.symbol)
+		hlog.Infof("[RecoveryExecutor] Got %d events to replay for %s:%s (locked)",
+			len(events), item.processorName, item.symbol)
 
-	// Step 3: 重放事件
-	eventsReplayed := 0
-	for _, event := range events {
-		// 检查context是否已超时
-		select {
-		case <-ctx.Done():
-			return nil, fmt.Errorf("recovery context timeout")
-		default:
+		// Step 3: 重放事件（使用 ProcessEventWithContext 建立完整的 Kafka Offset 链）
+		eventPipeline := re.matchEngine.GetEventPipeline()
+		if eventPipeline == nil {
+			return fmt.Errorf("event pipeline not found")
 		}
 
-		// 找到对应的处理器
-		processor := re.matchEngine.GetProcessor(item.processorName)
-		if processor == nil {
-			return nil, fmt.Errorf("processor %s not found", item.processorName)
+		eventsReplayed := 0
+		currentKafkaOffset := recoveryCtx.StartKafkaOffset
+
+		for _, event := range events {
+			// 检查context是否已超时
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("recovery context timeout")
+			default:
+			}
+
+			// 创建完整的 EventContext，包含 Kafka offset 和所有权Epoch
+			eventCtx := model.NewEventContext(
+				event,
+				recoveryCtx.Topic,
+				recoveryCtx.Partition,
+				currentKafkaOffset,
+			)
+			
+			// 注：所有权Epoch在恢复时通常为最新值
+			// 因为恢复发生在当前所有者持有锁时
+			eventCtx.WithOwnershipEpoch(1, "recovery") // 恢复流程
+
+			err := eventPipeline.ProcessEventWithContext(eventCtx)
+			if err != nil {
+				hlog.Errorf("[RecoveryExecutor] Failed to process event seq=%d with Kafka offset %d: %v",
+					event.EventSeq(), currentKafkaOffset, err)
+				return fmt.Errorf("failed to process event: %v", err)
+			}
+
+			eventsReplayed++
+			currentKafkaOffset++
 		}
 
-		// 处理事件 (幂等的)
-		if err := processor.ProcessEvent(event); err != nil {
-			hlog.Errorf("[RecoveryExecutor] Failed to process event seq=%d: %v", event.EventSeq(), err)
-			return nil, fmt.Errorf("failed to process event: %v", err)
-		}
+		result.EventsReplayed = int64(eventsReplayed)
+		result.OrdersRestored = recoveryCtx.ExpectedOrderCount
+		result.TradesRestored = recoveryCtx.ExpectedTradeCount
 
-		eventsReplayed++
-	}
+		// Step 4: 验证恢复结果
+		if opts.ValidateAfterRecovery {
+			postChecksum := re.checkpointMgr.CalculateStateChecksum(
+				re.matchEngine.GetOrderBook(item.symbol),
+				re.matchEngine.GetPositions(),
+			)
+			result.PostRecoveryChecksum = postChecksum
 
-	result.EventsReplayed = int64(eventsReplayed)
-	result.OrdersRestored = recoveryCtx.ExpectedOrderCount
-	result.TradesRestored = recoveryCtx.ExpectedTradeCount
+			isValid, errMsg := re.checkpointMgr.ValidateRecovery(
+				recoveryCtx.PreCrashChecksum,
+				postChecksum,
+				recoveryCtx.ExpectedOrderCount,
+				recoveryCtx.ExpectedOrderCount,
+				recoveryCtx.ExpectedTradeCount,
+				recoveryCtx.ExpectedTradeCount,
+			)
 
-	// Step 4: 验证恢复结果
-	if opts.ValidateAfterRecovery {
-		postChecksum := re.checkpointMgr.CalculateStateChecksum(
-			re.matchEngine.GetOrderBook(item.symbol),
-			re.matchEngine.GetPositions(),
-		)
-		result.PostRecoveryChecksum = postChecksum
-
-		// 验证checksum是否匹配
-		isValid, errMsg := re.checkpointMgr.ValidateRecovery(
-			recoveryCtx.PreCrashChecksum,
-			postChecksum,
-			recoveryCtx.ExpectedOrderCount,
-			recoveryCtx.ExpectedOrderCount,
-			recoveryCtx.ExpectedTradeCount,
-			recoveryCtx.ExpectedTradeCount,
-		)
-
-		if !isValid {
-			result.ValidationError = fmt.Errorf("%s", errMsg)
-			result.IsValid = false
-			hlog.Errorf("[RecoveryExecutor] Validation failed for %s:%s: %s",
-				item.processorName, item.symbol, errMsg)
+			if !isValid {
+				result.ValidationError = fmt.Errorf("%s", errMsg)
+				result.IsValid = false
+				hlog.Errorf("[RecoveryExecutor] Validation failed for %s:%s: %s",
+					item.processorName, item.symbol, errMsg)
+			} else {
+				result.IsValid = true
+				hlog.Infof("[RecoveryExecutor] Validation passed for %s:%s",
+					item.processorName, item.symbol)
+			}
 		} else {
 			result.IsValid = true
-			hlog.Infof("[RecoveryExecutor] Validation passed for %s:%s",
-				item.processorName, item.symbol)
 		}
-	} else {
-		result.IsValid = true
-	}
 
-	result.RecoveryEnd = time.Now()
+		result.RecoveryEnd = time.Now()
 
-	// Step 5: 标记恢复完成
-	if err := re.checkpointMgr.MarkRecoveryComplete(recoveryCtx, result.IsValid, ""); err != nil {
-		hlog.Errorf("[RecoveryExecutor] Failed to mark recovery complete: %v", err)
-		// 不返回错误，只记录日志
-	}
+		// Step 5: 标记恢复完成
+		if err := re.checkpointMgr.MarkRecoveryComplete(recoveryCtx, result.IsValid, ""); err != nil {
+			hlog.Errorf("[RecoveryExecutor] Failed to mark recovery complete: %v", err)
+		}
 
-	return result, nil
+		return nil
+	})
 }
 
 // getPendingRecoveryList 获取待恢复列表
+// 如果指定了processor和symbol，使用那个
+// 否则自动发现所有待恢复项
 func (re *RecoveryExecutor) getPendingRecoveryList(opts *RecoveryOptions) ([]*recoveryItem, error) {
-	// TODO: 从checkpointMgr获取待恢复列表
-	// 现在简单实现：返回空列表
-
 	var pendingList []*recoveryItem
 
-	// 如果指定了processor和symbol，直接用那个
+	// 优先使用明确指定的processor和symbol
 	if len(opts.ProcessorNames) > 0 && len(opts.Symbols) > 0 {
 		for _, procName := range opts.ProcessorNames {
 			for _, symbol := range opts.Symbols {
@@ -371,8 +471,25 @@ func (re *RecoveryExecutor) getPendingRecoveryList(opts *RecoveryOptions) ([]*re
 				}
 			}
 		}
+		return pendingList, nil
 	}
 
+	// 否则自动发现所有待恢复项
+	hlog.Infof("[RecoveryExecutor] Auto-discovering pending recovery items...")
+	pendingItems, err := re.checkpointMgr.ListPendingRecoveryItems()
+	if err != nil {
+		hlog.Errorf("[RecoveryExecutor] Failed to list pending recovery items: %v", err)
+		return nil, fmt.Errorf("failed to list pending recovery items: %v", err)
+	}
+
+	for _, item := range pendingItems {
+		pendingList = append(pendingList, &recoveryItem{
+			processorName: item["processor_name"],
+			symbol:        item["symbol"],
+		})
+	}
+
+	hlog.Infof("[RecoveryExecutor] Auto-discovered %d pending recovery items", len(pendingList))
 	return pendingList, nil
 }
 

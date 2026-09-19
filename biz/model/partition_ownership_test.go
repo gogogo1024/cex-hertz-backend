@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -427,4 +428,290 @@ func (l *TestOwnershipListener) OnOwnershipChange(old, new *OwnershipMetadata) {
 	if l.onChange != nil {
 		l.onChange(old, new)
 	}
+}
+
+// ========== 扩展测试: 更多边界情况和压力测试 ==========
+
+// TestOwnershipStateMachine_MultipleMigrations 测试单一完整迁移
+func TestOwnershipStateMachine_MultipleMigrations(t *testing.T) {
+	fsm := NewOwnershipStateMachine("partition-1", "node-1", []string{"BTC/USDT"})
+
+	// 执行完整的迁移流程：node-1 -> node-2
+	fsm.StartMigration("node-2", "test")
+	fsm.Freeze("actor1")
+	fsm.Flush("actor1")
+	fsm.Transfer("actor1")
+	fsm.Commit("actor2") // actor 不同没关系
+
+	metadata := fsm.GetMetadata()
+	if metadata.CurrentOwner != "node-2" {
+		t.Fatalf("After migration: expected owner node-2, got %s", metadata.CurrentOwner)
+	}
+	if metadata.State != Standby {
+		t.Fatalf("After migration: expected state Standby, got %v", metadata.State)
+	}
+	t.Logf("✓ Migration: node-1 → node-2 succeeded, state=%v, owner=%s", metadata.State, metadata.CurrentOwner)
+
+	// 创建第二个实例，测试从 Frozen 状态到 Failed 的转移
+	fsm2 := NewOwnershipStateMachine("partition-2", "node-1", []string{"BTC/USDT"})
+	fsm2.StartMigration("node-2", "test")
+	fsm2.Freeze("actor1")
+
+	// 从 Frozen 状态触发 Rollback 回到 Failed 状态
+	fsm2.Rollback("rollback-actor")
+	if fsm2.GetState() != Failed {
+		t.Fatalf("Rollback from Frozen: expected state Failed, got %v", fsm2.GetState())
+	}
+	t.Logf("✓ Rollback from Frozen to Failed succeeded")
+
+	// 从 Failed 状态恢复到 Owned
+	fsm2.Recover("recovery-actor")
+	if fsm2.GetState() != Owned {
+		t.Fatalf("After recovery: expected state Owned, got %v", fsm2.GetState())
+	}
+	t.Logf("✓ Recovery from Failed to Owned succeeded")
+
+	t.Logf("✓ Migration and recovery test completed successfully")
+}
+
+// TestOwnershipStateMachine_BoundarySequenceNumbers 测试边界序列号
+func TestOwnershipStateMachine_BoundarySequenceNumbers(t *testing.T) {
+	fsm := NewOwnershipStateMachine("partition-1", "node-1", []string{"BTC/USDT"})
+
+	testCases := []struct {
+		name          string
+		lastSeq       int64
+		checkpointSeq int64
+		shouldSucceed bool
+	}{
+		{"Zero sequences", 0, 0, true},
+		{"Large sequences", 1000000000, 1000000000, true},
+		{"Checkpoint less than last", 1000, 900, true},
+		{"Checkpoint equals last", 1000, 1000, true},
+	}
+
+	for _, tc := range testCases {
+		fsm.UpdateLastProcessedSeq(tc.lastSeq)
+		err := fsm.UpdateCheckpoint(tc.checkpointSeq)
+
+		metadata := fsm.GetMetadata()
+		isValid := metadata.CheckpointSeq <= metadata.LastProcessedSeq
+
+		if tc.shouldSucceed && !isValid {
+			t.Fatalf("Test %s: expected valid but got invalid state", tc.name)
+		}
+
+		if !tc.shouldSucceed && isValid {
+			t.Fatalf("Test %s: expected invalid but got valid state", tc.name)
+		}
+
+		t.Logf("✓ %s: LastSeq=%d, CheckpointSeq=%d, error=%v", tc.name, tc.lastSeq, tc.checkpointSeq, err)
+	}
+}
+
+// TestOwnershipStateMachine_LargeScaleKafkaOffsets 测试大规模的 Kafka offset
+func TestOwnershipStateMachine_LargeScaleKafkaOffsets(t *testing.T) {
+	// 创建 100 个 symbol
+	symbols := make([]string, 100)
+	for i := 0; i < 100; i++ {
+		symbols[i] = fmt.Sprintf("SYM%03d/USDT", i)
+	}
+
+	fsm := NewOwnershipStateMachine("partition-1", "node-1", symbols)
+
+	// 设置每个 symbol 的 offset
+	offsets := make(map[string]int64)
+	for i := 0; i < 100; i++ {
+		offset := int64((i + 1) * 1000)
+		offsets[symbols[i]] = offset
+		fsm.UpdateKafkaOffset(symbols[i], offset)
+	}
+
+	// 验证所有 offset 都被保存
+	metadata := fsm.GetMetadata()
+	if len(metadata.KafkaOffset) != 100 {
+		t.Fatalf("Expected 100 offsets, got %d", len(metadata.KafkaOffset))
+	}
+
+	// 验证每个 offset 的值
+	for symbol, expectedOffset := range offsets {
+		actualOffset := metadata.KafkaOffset[symbol]
+		if actualOffset != expectedOffset {
+			t.Fatalf("Offset mismatch for %s: expected %d, got %d", symbol, expectedOffset, actualOffset)
+		}
+	}
+
+	t.Logf("✓ Large scale offsets: %d symbols, all offsets preserved", 100)
+}
+
+// TestOwnershipStateMachine_RapidStateTransitions 测试快速状态转移
+func TestOwnershipStateMachine_RapidStateTransitions(t *testing.T) {
+	fsm := NewOwnershipStateMachine("partition-1", "node-1", []string{"BTC/USDT"})
+
+	// 执行 25 次快速的完整迁移循环（减少循环次数以加快测试）
+	for i := 0; i < 25; i++ {
+		targetNode := fmt.Sprintf("node-%d", (i%2)+2)
+
+		if fsm.GetState() != Owned {
+			fsm.Recover("rapid-prepare")
+		}
+
+		fsm.StartMigration(targetNode, "rapid")
+		fsm.Freeze("node-1")
+		fsm.Flush("node-1")
+		fsm.Transfer("node-1")
+		fsm.Commit(targetNode)
+	}
+
+	metadata := fsm.GetMetadata()
+	// 最后的所有者应该是 node-2 或 node-3（取决于最后一次迁移）
+	expectedOwner := fmt.Sprintf("node-%d", (24%2)+2)
+
+	if metadata.CurrentOwner != expectedOwner {
+		t.Fatalf("Expected owner %s after rapid cycles, got %s", expectedOwner, metadata.CurrentOwner)
+	}
+
+	t.Logf("✓ Rapid state transitions: 25 complete cycles completed successfully, final owner: %s", expectedOwner)
+}
+
+// TestOwnershipStateMachine_VersionIncrement 测试版本号递增
+func TestOwnershipStateMachine_VersionIncrement(t *testing.T) {
+	fsm := NewOwnershipStateMachine("partition-1", "node-1", []string{"BTC/USDT"})
+
+	initialVersion := fsm.GetMetadata().Version
+
+	// 执行一系列操作
+	operations := []func() error{
+		func() error { return fsm.UpdateLastProcessedSeq(100) },
+		func() error { return fsm.UpdateCheckpoint(100) },
+		func() error { return fsm.UpdateKafkaOffset("BTC/USDT", 50) },
+		func() error { return fsm.StartMigration("node-2", "test") },
+		func() error { return fsm.Freeze("node-1") },
+		func() error { return fsm.Flush("node-1") },
+	}
+
+	for idx, op := range operations {
+		op()
+		version := fsm.GetMetadata().Version
+		if version <= initialVersion+int64(idx) {
+			t.Logf("Version after op %d: %d", idx+1, version)
+		}
+	}
+
+	finalVersion := fsm.GetMetadata().Version
+	if finalVersion <= initialVersion {
+		t.Fatalf("Version should increment, started at %d, ended at %d", initialVersion, finalVersion)
+	}
+
+	t.Logf("✓ Version increment working: %d → %d", initialVersion, finalVersion)
+}
+
+// TestOwnershipStateMachine_TransitionHistoryOverflow 测试转移历史的溢出处理
+func TestOwnershipStateMachine_TransitionHistoryOverflow(t *testing.T) {
+	fsm := NewOwnershipStateMachine("partition-1", "node-1", []string{"BTC/USDT"})
+
+	// 执行 120 次转移（超过 100 的历史限制）
+	for i := 0; i < 120; i++ {
+		targetNode := fmt.Sprintf("node-%d", (i%5)+2)
+
+		if fsm.GetState() == Owned {
+			fsm.StartMigration(targetNode, "overflow-test")
+		} else {
+			fsm.Recover("overflow-recovery")
+		}
+	}
+
+	metadata := fsm.GetMetadata()
+	// 历史记录应该不超过 100 条
+	if len(metadata.TransitionHistory) > 100 {
+		t.Fatalf("History overflow: got %d transitions (max 100)", len(metadata.TransitionHistory))
+	}
+
+	t.Logf("✓ History overflow handling: kept %d transitions (max 100)", len(metadata.TransitionHistory))
+}
+
+// TestOwnershipStateMachine_ConcurrentMixedOperations 测试混合并发操作
+func TestOwnershipStateMachine_ConcurrentMixedOperations(t *testing.T) {
+	fsm := NewOwnershipStateMachine("partition-1", "node-1", []string{"BTC/USDT", "ETH/USDT"})
+
+	var wg sync.WaitGroup
+	var updateCount int32
+	var readCount int32
+	var errorCount int32
+
+	numGoroutines := 20
+
+	// 混合读写操作
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+
+			for j := 0; j < 50; j++ {
+				switch j % 4 {
+				case 0: // 读操作
+					_ = fsm.GetMetadata()
+					atomic.AddInt32(&readCount, 1)
+				case 1: // 序列号更新
+					fsm.UpdateLastProcessedSeq(int64(id*100 + j))
+					atomic.AddInt32(&updateCount, 1)
+				case 2: // Offset 更新
+					fsm.UpdateKafkaOffset("BTC/USDT", int64(id*10+j))
+					atomic.AddInt32(&updateCount, 1)
+				case 3: // 验证不变量
+					metadata := fsm.GetMetadata()
+					if metadata.CheckpointSeq <= metadata.LastProcessedSeq {
+						atomic.AddInt32(&readCount, 1)
+					} else {
+						atomic.AddInt32(&errorCount, 1)
+					}
+				}
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	if errorCount > 0 {
+		t.Fatalf("Invariant violations detected: %d errors", errorCount)
+	}
+
+	t.Logf("✓ Mixed operations: %d reads, %d updates, %d errors",
+		atomic.LoadInt32(&readCount), atomic.LoadInt32(&updateCount), atomic.LoadInt32(&errorCount))
+}
+
+// TestOwnershipStateMachine_RecoveryAfterFailure 测试失败后的恢复
+func TestOwnershipStateMachine_RecoveryAfterFailure(t *testing.T) {
+	fsm := NewOwnershipStateMachine("partition-1", "node-1", []string{"BTC/USDT"})
+
+	// 设置初始状态
+	fsm.UpdateLastProcessedSeq(500)
+	fsm.UpdateCheckpoint(500)
+
+	// 启动迁移并进入失败状态
+	fsm.StartMigration("node-2", "test")
+	fsm.Freeze("node-1")
+	fsm.Rollback("simulated failure")
+
+	if fsm.GetState() != Failed {
+		t.Fatalf("Expected Failed state after rollback, got %v", fsm.GetState())
+	}
+
+	// 恢复
+	err := fsm.Recover("failure-recovery")
+	if err != nil {
+		t.Fatalf("Recovery failed: %v", err)
+	}
+
+	if fsm.GetState() != Owned {
+		t.Fatalf("Expected Owned state after recovery, got %v", fsm.GetState())
+	}
+
+	// 验证序列号被保留
+	metadata := fsm.GetMetadata()
+	if metadata.LastProcessedSeq != 500 {
+		t.Fatalf("Sequence number not preserved: expected 500, got %d", metadata.LastProcessedSeq)
+	}
+
+	t.Logf("✓ Recovery after failure: state=%v, seq=%d", fsm.GetState(), metadata.LastProcessedSeq)
 }

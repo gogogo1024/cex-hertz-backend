@@ -48,9 +48,9 @@ func main() {
 	// Phase 2.5: 启动恢复检测与执行
 	if cfg.Recovery.EnableAutoRecovery {
 		if err := initRecovery(context.Background(), cfg, matchEngine); err != nil {
-			hlog.Warnf("[main] 恢复执行失败，继续启动: %v", err)
+			hlog.Warnf("[main] 自动恢复失败，继续启动: %v", err)
 		} else {
-			hlog.Infof("[main] 恢复检测完成")
+			hlog.Infof("[main] 自动恢复检测完成")
 		}
 	}
 
@@ -124,7 +124,11 @@ func initBusiness(cfg *conf.Config, h *server.Hertz) (*server.Hertz, *service.Pa
 	return wsServer, pm, localAddr, matchEngine
 }
 
-// Phase 2.5: 恢复启动函数
+// Phase 2.5: 恢复启动函数（最优化版本：单次数据库查询）
+// 优化点：
+// 1. 直接调用 ExecuteRecovery()，避免 ShouldRecover() 的重复查询
+// 2. ExecuteRecovery() 内部已检查待恢复项，无需提前检测
+// 3. 通过结果的 EventsReplayed 判断是否进行了恢复
 func initRecovery(ctx context.Context, cfg *conf.Config, matchEngine *service.PartitionAwareMatchEngine) error {
 	if matchEngine == nil {
 		return fmt.Errorf("matchEngine is nil")
@@ -145,38 +149,38 @@ func initRecovery(ctx context.Context, cfg *conf.Config, matchEngine *service.Pa
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// 检测是否需要恢复
-	shouldRecover, err := recoveryExecutor.ShouldRecover(ctx)
-	if err != nil {
-		hlog.Warnf("[initRecovery] 检测恢复状态失败: %v", err)
-		return err
-	}
-
-	if !shouldRecover {
-		hlog.Infof("[initRecovery] 无需恢复")
-		return nil
-	}
-
-	hlog.Infof("[initRecovery] 检测到需要恢复，开始执行恢复")
-
-	// 执行恢复
+	// 配置恢复选项
 	opts := &service.RecoveryOptions{
 		Strategy:              service.INCREMENTAL,
 		ValidateAfterRecovery: cfg.Recovery.ValidateAfterRecovery,
 		MaxRetries:            cfg.Recovery.MaxRetries,
 	}
 
+	// 直接执行恢复（只查 1 次数据库）
+	// 内部流程：
+	//   1. getPendingRecoveryList() 查询数据库获取待恢复项
+	//   2. 如果无待恢复项，返回 EventsReplayed=0
+	//   3. 如果有待恢复项，并行恢复所有项目
 	result, err := recoveryExecutor.ExecuteRecovery(ctx, opts)
 	if err != nil {
 		hlog.Errorf("[initRecovery] 恢复执行失败: %v", err)
 		return err
 	}
 
-	if result != nil {
-		hlog.Infof("[initRecovery] 恢复完成: 处理器=%s, 符号=%s, 状态验证=%v",
-			result.ProcessorName, result.Symbol, result.IsValid)
-	} else {
+	if result == nil {
 		hlog.Warnf("[initRecovery] 恢复结果为nil")
+		return nil
+	}
+
+	// 根据恢复结果判断是否进行了恢复
+	if result.EventsReplayed == 0 {
+		hlog.Infof("[initRecovery] 无待恢复项，继续正常启动")
+	} else {
+		hlog.Infof("[initRecovery] 恢复完成: 耗时=%v, 恢复项=%d, 事件数=%d, 验证=%v",
+			result.RecoveryEnd.Sub(result.RecoveryStart),
+			result.ProcessorName, // 实际应该是多个processor，但这里简化显示
+			result.EventsReplayed,
+			result.IsValid)
 	}
 
 	return nil

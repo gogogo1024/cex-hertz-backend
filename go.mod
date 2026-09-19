@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/cloudwego/hertz v0.10.1
+	github.com/go-redsync/redsync/v4 v4.18.0
 	github.com/hashicorp/consul/api v1.32.1
 	github.com/hertz-contrib/cors v0.1.0
 	github.com/hertz-contrib/gzip v0.0.3
@@ -15,10 +16,11 @@ require (
 	github.com/jackc/pgx/v5 v5.7.5
 	github.com/joho/godotenv v1.5.1
 	github.com/kr/pretty v0.3.1
+	github.com/lib/pq v1.12.3
 	github.com/linxGnu/grocksdb v1.11.1
 	github.com/panjf2000/ants/v2 v2.11.3
-	github.com/redis/go-redis/v9 v9.11.0
-	github.com/segmentio/kafka-go v0.4.48
+	github.com/redis/go-redis/v9 v9.22.0
+	github.com/segmentio/kafka-go v0.4.51
 	github.com/sony/sonyflake v1.3.0
 	github.com/spf13/viper v1.20.1
 	github.com/stretchr/testify v1.12.1
@@ -38,7 +40,6 @@ require (
 	github.com/cloudwego/base64x v0.1.7 // indirect
 	github.com/cloudwego/gopkg v0.1.4 // indirect
 	github.com/cloudwego/netpoll v0.7.1 // indirect
-	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/fatih/color v1.16.0 // indirect
 	github.com/felixge/fgprof v0.9.3 // indirect
 	github.com/fsnotify/fsnotify v1.8.0 // indirect
@@ -80,12 +81,13 @@ require (
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
+	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/arch v0.31.0 // indirect
 	golang.org/x/crypto v0.37.0 // indirect
 	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394 // indirect
-	golang.org/x/sync v0.13.0 // indirect
+	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.24.0 // indirect
 	google.golang.org/protobuf v1.36.1 // indirect
