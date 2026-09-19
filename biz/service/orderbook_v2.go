@@ -84,8 +84,8 @@ func (c PriceComparatorAsc) CalcScore(element interface{}) float64 {
 	return -float64(element.(model.PriceInNano))
 }
 
-// NewOrderBookV2 创建一个新的 OrderBook
-func NewOrderBookV2(symbol string, sequencer *Sequencer) *OrderBookV2 {
+// NewOrderBook 创建一个新的 OrderBook
+func NewOrderBook(symbol string, sequencer *Sequencer) *OrderBookV2 {
 	return &OrderBookV2{
 		symbol:    symbol,
 		buys:      skiplist.New(PriceComparatorDesc{}),

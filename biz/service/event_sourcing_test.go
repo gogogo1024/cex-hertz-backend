@@ -33,7 +33,7 @@ func TestIntegerArithmetic(t *testing.T) {
 // TestOrderBookV2Matching 验证 OrderBookV2 的撮合逻辑
 func TestOrderBookV2Matching(t *testing.T) {
 	sequencer := NewSequencer()
-	ob := NewOrderBookV2("BTC/USD", sequencer)
+	ob := NewOrderBook("BTC/USD", sequencer)
 
 	// 测试场景：
 	// 1. 添加一个卖单：@100, qty=1.0
@@ -84,7 +84,7 @@ func TestOrderBookV2Matching(t *testing.T) {
 // TestDepthAggregation 验证深度聚合的正确性
 func TestDepthAggregation(t *testing.T) {
 	sequencer := NewSequencer()
-	ob := NewOrderBookV2("BTC/USD", sequencer)
+	ob := NewOrderBook("BTC/USD", sequencer)
 
 	// 测试场景：
 	// 同一价位有多个订单，深度应该聚合
@@ -266,7 +266,7 @@ func (tp *testProcessor) ProcessorName() string {
 // BenchmarkOrderBookMatching 性能基准测试
 func BenchmarkOrderBookMatching(b *testing.B) {
 	sequencer := NewSequencer()
-	ob := NewOrderBookV2("BTC/USD", sequencer)
+	ob := NewOrderBook("BTC/USD", sequencer)
 
 	// 预先添加一些卖单
 	for i := 0; i < 100; i++ {

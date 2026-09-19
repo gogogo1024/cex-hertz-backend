@@ -126,7 +126,7 @@ func (me *MatchEngine) enqueueOrder(order model.SubmitOrderMsg, priceInNano mode
 	queue := queueAny.(chan OrderQueueItem)
 
 	// 获取或创建该 symbol 的 OrderBook
-	_, loaded := me.orderBooks.LoadOrStore(symbol, NewOrderBookV2(symbol, me.sequencer))
+	_, loaded := me.orderBooks.LoadOrStore(symbol, NewOrderBook(symbol, me.sequencer))
 	if !loaded {
 		// 第一次创建该 symbol 的 OrderBook，启动 worker
 		go me.matchWorker(symbol, queue)
