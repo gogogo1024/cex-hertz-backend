@@ -38,7 +38,7 @@ type PriceInNano int64        // $65123.45 → 6512345_0000_0000
 type QuantityInNano int64     // 0.12345678 BTC → 12345678
 
 // biz/service/orderbook_v2.go
-func (ob *OrderBookV2) matchBuyOrder(order *OrderBookEntry, remainingQty *QuantityInNano) []Event {
+func (ob *OrderBook) matchBuyOrder(order *OrderBookEntry, remainingQty *QuantityInNano) []Event {
     tradeQty := model.Min(*remainingQty, seller.Quantity - seller.FilledQty)  // 整数运算
 }
 ```
@@ -56,11 +56,11 @@ func (ob *OrderBookV2) matchBuyOrder(order *OrderBookEntry, remainingQty *Quanti
 ```
 
 **新方案**：
-- 在 `OrderBookV2.GetDepth()` 中按 price level 聚合
+- 在 `OrderBook.GetDepth()` 中按 price level 聚合
 
 ```go
 // biz/service/orderbook_v2.go
-func (ob *OrderBookV2) GetDepth(levels int) (bids, asks) {
+func (ob *OrderBook) GetDepth(levels int) (bids, asks) {
     for i := 0; i < levels && elem != nil; i, elem = i+1, elem.Next() {
         price := elem.Key().(PriceInNano)
         queue := elem.Value.([]*OrderBookEntry)  // 同一价格的所有订单

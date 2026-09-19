@@ -12,7 +12,7 @@ echo "======================================"
 echo ""
 echo "1️⃣  运行单元测试..."
 cd $(dirname "$0")
-go test -v -timeout=10s ./biz/service -run "TestIntegerArithmetic|TestOrderBookV2Matching|TestDepthAggregation|TestEventPipeline_Idempotency|TestEventLog_Recovery|TestPositionProcessor_Idempotency"
+go test -v -timeout=10s ./biz/service -run "TestIntegerArithmetic|TestOrderBookMatching|TestDepthAggregation|TestEventPipeline_Idempotency|TestEventLog_Recovery|TestPositionProcessor_Idempotency"
 
 if [ $? -ne 0 ]; then
     echo "❌ 单元测试失败！"
@@ -137,7 +137,7 @@ cat << 'EOF'
   │
   ├─ biz/service/event_sourcing_test.go
   │  ├─ TestIntegerArithmetic() - 验证无浮点误差 ✅
-  │  ├─ TestOrderBookV2Matching() - 撮合逻辑 ✅
+	│  ├─ TestOrderBookMatching() - 撮合逻辑 ✅
   │  ├─ TestDepthAggregation() - 深度聚合 ✅
   │  ├─ TestEventPipeline_Idempotency() - 幂等性 ✅
   │  ├─ TestEventLog_Recovery() - 恢复能力 ✅

@@ -19,7 +19,7 @@ Order → Event → EventLog → Pipeline → [DB, Position, WS] → 确定性�
 | # | 问题 | 原因 | V2 解决方案 | 验证方式 |
 |---|------|------|-----------|----------|
 | ① | float64 误差 | 浮点运算积累 | `int64` 精确计算（见 `PriceInNano`, `QuantityInNano`） | `TestIntegerArithmetic` |
-| ② | 深度聚合错 | 覆盖而非聚合 | `OrderBookV2.GetDepth()` 完整聚合 | `TestDepthAggregation` |
+| ② | 深度聚合错 | 覆盖而非聚合 | `OrderBook.GetDepth()` 完整聚合 | `TestDepthAggregation` |
 | ③ | 全局 race | `var tradeBatchForDB` 无保护 | EventPipeline + 各 Processor 独立 mutex | `race -test` |
 | ④ | pool lifetime | use-after-return | 无 pool 或完全隔离 | 集成测试 |
 | ⑤ | 异步不一致 | `go func` 延迟 | PositionProcessor 同步处理 | `TestPositionProcessor_Idempotency` |
@@ -84,7 +84,7 @@ go test -race -v ./biz/service/event_sourcing_test.go
 **预期结果**：
 ```
 TestIntegerArithmetic ✅
-TestOrderBookV2Matching ✅
+TestOrderBookMatching ✅
 TestDepthAggregation ✅
 TestEventPipeline_Idempotency ✅
 TestEventLog_Recovery ✅
@@ -233,7 +233,7 @@ go test -run TestConcurrentMatching -race -timeout=30s
 
 ### 单元测试 ✅
 - [x] TestIntegerArithmetic - 无浮点误差
-- [x] TestOrderBookV2Matching - 撮合逻辑
+- [x] TestOrderBookMatching - 撮合逻辑
 - [x] TestDepthAggregation - 深度聚合
 - [x] TestEventPipeline_Idempotency - 幂等性
 - [x] TestEventLog_Recovery - 恢复能力
