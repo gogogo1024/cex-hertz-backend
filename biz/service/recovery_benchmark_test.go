@@ -11,7 +11,7 @@ import (
 // ============ Phase 3.5: Performance Benchmarking SLA Validation ============
 //
 // 目标: 验证crash recovery系统的性能指标符合生产级SLA
-// 
+//
 // SLA指标 (基于设计文档):
 // 1. RTO (Recovery Time Objective): < 30 秒
 //    - 从crash检测到完全恢复的总时间
@@ -34,23 +34,23 @@ import (
 func BenchmarkRecoveryTimeSLA(b *testing.B) {
 	b.Run("recovery_time_1k_orders_10k_trades", func(b *testing.B) {
 		baseline := createLargeScaleBaseline()
-		
+
 		b.ResetTimer()
-		
+
 		for i := 0; i < b.N; i++ {
 			start := time.Now()
-			
+
 			// Simulate crash + recovery
 			_ = recoverStateFromKafka(baseline)
-			
+
 			elapsed := time.Since(start)
-			
+
 			// RTO SLA: 应该 < 30 秒
 			assert.Less(b, elapsed, 30*time.Second,
 				"Recovery should complete within 30 seconds (RTO SLA)")
 		}
 	})
-	
+
 	// 报告结果
 	b.Logf("✓ RTO Benchmark: Recovery typically < 30s ✓")
 }
@@ -65,25 +65,25 @@ func BenchmarkThroughputSLA(b *testing.B) {
 	b.Run("event_throughput", func(b *testing.B) {
 		const numEvents = 10000
 		baseline := createBaselineState("BTC/USDT", 1000, numEvents)
-		
+
 		b.ReportAllocs()
 		b.ResetTimer()
-		
+
 		for i := 0; i < b.N; i++ {
 			start := time.Now()
-			
+
 			// Simulate event processing (recovery phase)
 			_ = recoverStateFromKafka(baseline)
-			
+
 			elapsed := time.Since(start)
 			throughput := float64(numEvents) / elapsed.Seconds()
-			
+
 			// Throughput SLA: 应该 > 1000 events/sec
 			assert.Greater(b, throughput, 1000.0,
 				"Throughput should exceed 1000 events/second")
 		}
 	})
-	
+
 	b.Logf("✓ Throughput Benchmark: > 1000 events/sec ✓")
 }
 
@@ -96,23 +96,23 @@ func BenchmarkCheckpointWriteLatency(b *testing.B) {
 	b.Run("checkpoint_write_latency", func(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
-		
+
 		for i := 0; i < b.N; i++ {
 			// Simulate checkpoint save
 			start := time.Now()
-			
+
 			// 在真实场景中这会调用PostgreSQL
 			// 这里我们模拟数据库操作的时间
 			simulateCheckpointSave()
-			
+
 			elapsed := time.Since(start)
-			
+
 			// Write Latency SLA: < 200ms
 			assert.Less(b, elapsed, 200*time.Millisecond,
 				"Checkpoint write should complete within 200ms")
 		}
 	})
-	
+
 	b.Logf("✓ Checkpoint Write Latency Benchmark: < 200ms ✓")
 }
 
@@ -124,24 +124,24 @@ func BenchmarkCheckpointWriteLatency(b *testing.B) {
 func BenchmarkRecoveryQueryLatency(b *testing.B) {
 	b.Run("recovery_query_latency", func(b *testing.B) {
 		baseline := createLargeScaleBaseline()
-		
+
 		b.ReportAllocs()
 		b.ResetTimer()
-		
+
 		for i := 0; i < b.N; i++ {
 			start := time.Now()
-			
+
 			// Simulate recovery query (fetch latest checkpoint)
 			_ = queryLatestCheckpoint(baseline)
-			
+
 			elapsed := time.Since(start)
-			
+
 			// Query Latency SLA: < 100ms
 			assert.Less(b, elapsed, 100*time.Millisecond,
 				"Recovery query should complete within 100ms")
 		}
 	})
-	
+
 	b.Logf("✓ Recovery Query Latency Benchmark: < 100ms ✓")
 }
 
@@ -154,29 +154,29 @@ func BenchmarkRecoveryQueryLatency(b *testing.B) {
 func BenchmarkMemoryOverhead(b *testing.B) {
 	b.Run("memory_overhead", func(b *testing.B) {
 		baseline := createLargeScaleBaseline()
-		
+
 		// Simulate baseline memory usage
 		baselineMemory := estimateStateMemory(baseline)
-		
+
 		b.ReportAllocs()
 		b.ResetTimer()
-		
+
 		for i := 0; i < b.N; i++ {
 			// Create recovery structures
 			recovered := recoverStateFromKafka(baseline)
-			
+
 			// Estimate memory with recovery structures
 			recoveryMemory := estimateStateMemory(recovered)
-			
+
 			// Calculate overhead
 			overhead := float64(recoveryMemory-baselineMemory) / float64(baselineMemory) * 100
-			
+
 			// Memory Overhead SLA: < 10%
 			assert.Less(b, overhead, 10.0,
 				"Memory overhead should be less than 10%%")
 		}
 	})
-	
+
 	b.Logf("✓ Memory Overhead Benchmark: < 10%% ✓")
 }
 
@@ -184,24 +184,24 @@ func BenchmarkMemoryOverhead(b *testing.B) {
 // 这个测试运行所有SLA检查并生成报告
 func TestRecoverySLAComplianceReport(t *testing.T) {
 	t.Parallel()
-	
+
 	baseline := createLargeScaleBaseline()
-	
+
 	// SLA Checklist
 	report := make(map[string]bool)
-	
+
 	// 1. RTO Check (< 30s)
 	t.Run("RTO_SLA", func(t *testing.T) {
 		start := time.Now()
 		_ = recoverStateFromKafka(baseline)
 		elapsed := time.Since(start)
-		
+
 		passed := elapsed < 30*time.Second
 		report["RTO (<30s)"] = passed
 		t.Logf("RTO: %v (target: <30s) - %s", elapsed, boolToStatus(passed))
 		assert.True(t, passed, "RTO should be < 30 seconds")
 	})
-	
+
 	// 2. RPO Check (= 0, zero data loss)
 	t.Run("RPO_SLA", func(t *testing.T) {
 		pre := &StateSnapshot{
@@ -215,66 +215,66 @@ func TestRecoverySLAComplianceReport(t *testing.T) {
 			PositionCount: baseline.PositionCount,
 		}
 		pre.CalculateChecksum()
-		
+
 		post := recoverStateFromKafka(baseline)
 		post.CalculateChecksum()
-		
+
 		passed := pre.Checksum == post.Checksum
 		report["RPO (Zero Loss)"] = passed
 		t.Logf("RPO: Data loss = %v - %s", !passed, boolToStatus(passed))
 		assert.True(t, passed, "RPO should be zero data loss")
 	})
-	
+
 	// 3. Throughput Check (> 1000 events/sec)
 	t.Run("Throughput_SLA", func(t *testing.T) {
 		start := time.Now()
 		_ = recoverStateFromKafka(baseline)
 		elapsed := time.Since(start)
-		
+
 		throughput := float64(baseline.EventCount) / elapsed.Seconds()
 		passed := throughput > 1000
 		report["Throughput (>1000/s)"] = passed
 		t.Logf("Throughput: %.0f events/sec (target: >1000) - %s", throughput, boolToStatus(passed))
 		assert.True(t, passed, "Throughput should exceed 1000 events/second")
 	})
-	
+
 	// 4. Write Latency Check (< 200ms)
 	t.Run("WriteLatency_SLA", func(t *testing.T) {
 		start := time.Now()
 		simulateCheckpointSave()
 		elapsed := time.Since(start)
-		
+
 		passed := elapsed < 200*time.Millisecond
 		report["Write Latency (<200ms)"] = passed
 		t.Logf("Write Latency: %v (target: <200ms) - %s", elapsed, boolToStatus(passed))
 		assert.True(t, passed, "Write latency should be < 200ms")
 	})
-	
+
 	// 5. Query Latency Check (< 100ms)
 	t.Run("QueryLatency_SLA", func(t *testing.T) {
 		start := time.Now()
 		_ = queryLatestCheckpoint(baseline)
 		elapsed := time.Since(start)
-		
+
 		passed := elapsed < 100*time.Millisecond
 		report["Query Latency (<100ms)"] = passed
 		t.Logf("Query Latency: %v (target: <100ms) - %s", elapsed, boolToStatus(passed))
 		assert.True(t, passed, "Query latency should be < 100ms")
 	})
-	
+
 	// 6. Memory Overhead Check (< 10%)
 	t.Run("MemoryOverhead_SLA", func(t *testing.T) {
 		baselineMemory := estimateStateMemory(baseline)
 		recovered := recoverStateFromKafka(baseline)
 		recoveryMemory := estimateStateMemory(recovered)
-		
+
 		overhead := float64(recoveryMemory-baselineMemory) / float64(baselineMemory) * 100
 		passed := overhead < 10
 		report["Memory Overhead (<10%)"] = passed
 		t.Logf("Memory Overhead: %.1f%% (target: <10%%) - %s", overhead, boolToStatus(passed))
 		assert.True(t, passed, "Memory overhead should be < 10%%")
 	})
-	
+
 	// Print comprehensive SLA report
 	t.Logf("%s", generateSLAReport(report))
 }
@@ -287,11 +287,11 @@ func TestRecoverySLAComplianceReport(t *testing.T) {
 // - State comparison time
 func TestRecoveryPerformanceProfile(t *testing.T) {
 	t.Parallel()
-	
+
 	baseline := createLargeScaleBaseline()
-	
+
 	profileResults := make(map[string]time.Duration)
-	
+
 	// 1. State Copying
 	t.Run("state_copy_time", func(t *testing.T) {
 		start := time.Now()
@@ -302,7 +302,7 @@ func TestRecoveryPerformanceProfile(t *testing.T) {
 		profileResults["State Copy"] = elapsed
 		t.Logf("State Copy Time: %v", elapsed)
 	})
-	
+
 	// 2. Snapshot Calculation
 	t.Run("snapshot_calc_time", func(t *testing.T) {
 		snap := &StateSnapshot{
@@ -314,14 +314,14 @@ func TestRecoveryPerformanceProfile(t *testing.T) {
 			TradeCount:    baseline.TradeCount,
 			PositionCount: baseline.PositionCount,
 		}
-		
+
 		start := time.Now()
 		snap.CalculateChecksum()
 		elapsed := time.Since(start)
 		profileResults["Snapshot Calculation"] = elapsed
 		t.Logf("Snapshot Calculation Time: %v", elapsed)
 	})
-	
+
 	// 3. Checksum Computation
 	t.Run("checksum_time", func(t *testing.T) {
 		snap := &StateSnapshot{
@@ -329,14 +329,14 @@ func TestRecoveryPerformanceProfile(t *testing.T) {
 			Trades:    baseline.Trades,
 			Positions: baseline.Positions,
 		}
-		
+
 		start := time.Now()
 		snap.CalculateChecksum()
 		elapsed := time.Since(start)
 		profileResults["Checksum Computation"] = elapsed
 		t.Logf("Checksum Computation Time: %v", elapsed)
 	})
-	
+
 	// 4. State Comparison
 	t.Run("state_comparison_time", func(t *testing.T) {
 		pre := &StateSnapshot{
@@ -357,14 +357,14 @@ func TestRecoveryPerformanceProfile(t *testing.T) {
 			TradeCount:    baseline.TradeCount,
 			PositionCount: baseline.PositionCount,
 		}
-		
+
 		start := time.Now()
 		_ = CompareSnapshots(pre, post)
 		elapsed := time.Since(start)
 		profileResults["State Comparison"] = elapsed
 		t.Logf("State Comparison Time: %v", elapsed)
 	})
-	
+
 	// Print performance profile
 	t.Logf("%s", generatePerformanceProfile(profileResults))
 }
@@ -374,13 +374,13 @@ func TestRecoveryPerformanceProfile(t *testing.T) {
 func simulateCheckpointSave() {
 	// Simulate PostgreSQL save operation
 	// In real scenario: execute INSERT/UPDATE with checkpoint data
-	time.Sleep(time.Microsecond * 50)  // Simulated DB latency
+	time.Sleep(time.Microsecond * 50) // Simulated DB latency
 }
 
 func queryLatestCheckpoint(baseline *StateSnapshot) *StateSnapshot {
 	// Simulate recovery checkpoint query
 	// In real scenario: SELECT ... FROM checkpoint_table ORDER BY event_seq DESC LIMIT 1
-	time.Sleep(time.Microsecond * 30)  // Simulated query latency
+	time.Sleep(time.Microsecond * 30) // Simulated query latency
 	return baseline
 }
 
@@ -390,19 +390,19 @@ func estimateStateMemory(state *StateSnapshot) int64 {
 	// Trades: ~150 bytes per trade
 	// Positions: ~100 bytes per position
 	memory := int64(0)
-	
+
 	// Orders
 	memory += int64(len(state.Orders)) * 200
-	
+
 	// Trades
 	memory += int64(len(state.Trades)) * 150
-	
+
 	// Positions
 	memory += int64(len(state.Positions)) * 100
-	
+
 	// Metadata
-	memory += 1024  // Overhead for maps, metadata, etc.
-	
+	memory += 1024 // Overhead for maps, metadata, etc.
+
 	return memory
 }
 
@@ -417,7 +417,7 @@ func generateSLAReport(report map[string]bool) string {
 	result := "\n╔════════════════════════════════════════════════════════════╗\n"
 	result += "║           Recovery SLA Compliance Report                     ║\n"
 	result += "╚════════════════════════════════════════════════════════════╝\n"
-	
+
 	passCount := 0
 	for sla, passed := range report {
 		status := "✓ PASS"
@@ -428,15 +428,15 @@ func generateSLAReport(report map[string]bool) string {
 		}
 		result += fmt.Sprintf("%-30s %s\n", sla, status)
 	}
-	
+
 	result += fmt.Sprintf("\nTotal: %d/%d SLAs passed\n", passCount, len(report))
-	
+
 	if passCount == len(report) {
 		result += "Status: ✓ ALL SLAs PASSED - PRODUCTION READY\n"
 	} else {
 		result += fmt.Sprintf("Status: ✗ %d SLA(s) FAILED\n", len(report)-passCount)
 	}
-	
+
 	return result
 }
 
@@ -444,18 +444,18 @@ func generatePerformanceProfile(profile map[string]time.Duration) string {
 	result := "\n╔════════════════════════════════════════════════════════════╗\n"
 	result += "║           Recovery Performance Profile                       ║\n"
 	result += "╚════════════════════════════════════════════════════════════╝\n"
-	
+
 	totalTime := time.Duration(0)
 	for _, duration := range profile {
 		totalTime += duration
 	}
-	
+
 	for operation, duration := range profile {
 		percent := float64(duration) / float64(totalTime) * 100
 		result += fmt.Sprintf("%-30s %12v  (%.1f%%)\n", operation, duration, percent)
 	}
-	
+
 	result += fmt.Sprintf("\nTotal Recovery Time: %v\n", totalTime)
-	
+
 	return result
 }
