@@ -24,6 +24,7 @@ type PartitionAwareMatchEngine struct {
 }
 
 // NewPartitionAwareMatchEngine 创建支持动态分区的撮合引擎
+// 自动从Consul幂等地分配NodeID
 func NewPartitionAwareMatchEngine(
 	pm *PartitionManager,
 	localAddr string,
@@ -32,17 +33,26 @@ func NewPartitionAwareMatchEngine(
 ) *PartitionAwareMatchEngine {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// 创建基础的事件处理基础设施
-	sequencer := NewSequencer()
+	// 1. 获取或分配NodeID（幂等性：重启后获得相同ID）
+	nodeIDMgr := NewNodeIDManager(pm.GetConsulClient(), localAddr)
+	nodeID, err := nodeIDMgr.GetOrAllocateNodeID()
+	if err != nil {
+		hlog.Errorf("[PartitionAwareMatchEngine] Failed to allocate NodeID: %v", err)
+		nodeID = 0 // 降级到单机模式
+	}
+
+	// 2. 创建基础的事件处理基础设施
+	// 使用分布式Sequencer（带NodeID），确保全局唯一的seq
+	sequencer := NewSequencerWithNodeID(nodeID)
 	eventLog := NewInMemoryEventLog()
 	eventPipeline := NewEventPipeline(eventLog)
 
-	// 注册所有处理器
+	// 3. 注册所有处理器
 	eventPipeline.RegisterProcessor(NewDatabaseProcessor(nil, 1000))
 	eventPipeline.RegisterProcessor(NewPositionProcessor(nil, nil))
 	eventPipeline.RegisterProcessor(NewWebSocketProcessor(broadcaster, unicaster))
 
-	// 创建基础的 MatchEngine
+	// 4. 创建基础的 MatchEngine
 	matchEngine := NewMatchEngine(eventPipeline, eventLog, sequencer, broadcaster, unicaster)
 
 	pa := &PartitionAwareMatchEngine{
@@ -53,7 +63,9 @@ func NewPartitionAwareMatchEngine(
 		cancel:      cancel,
 	}
 
-	// 启动分区监听
+	hlog.Infof("[PartitionAwareMatchEngine] Initialized with NodeID=%d, LocalAddr=%s", nodeID, localAddr)
+
+	// 5. 启动分区监听
 	go pa.watchPartitionChange()
 
 	return pa

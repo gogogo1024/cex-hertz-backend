@@ -153,3 +153,8 @@ func (pm *PartitionManager) UpdatePartitionTable(pt *model.PartitionTable) error
 	pm.lock.Unlock()
 	return pm.SaveToConsul()
 }
+
+// GetConsulClient 获取Consul客户端（用于其他服务如NodeIDManager）
+func (pm *PartitionManager) GetConsulClient() *api.Client {
+	return pm.client
+}
