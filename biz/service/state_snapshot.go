@@ -1,7 +1,8 @@
 package service
 
 import (
-	"crypto/md5"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"strings"
@@ -16,7 +17,7 @@ type StateSnapshot struct {
 	Trades        map[string]*TradeSnapshot    // 交易ID -> 交易信息
 	Positions     map[string]*PositionSnapshot // 用户ID -> 持仓信息
 	OrderBook     *OrderBookSnapshot           // 整个订单簿
-	Checksum      string                       // MD5 hash of this snapshot
+	Checksum      string                       // SHA-256 hash of this snapshot (hex)
 	EventCount    int64                        // 总事件数
 	OrderCount    int64                        // 订单数
 	TradeCount    int64                        // 交易数
@@ -75,9 +76,10 @@ type OrderBookSnapshot struct {
 // CalculateChecksum 计算快照的MD5校验和
 // 用于快速验证两个快照是否相同
 func (s *StateSnapshot) CalculateChecksum() string {
-	h := md5.New()
+	// 构建规范化的字节表示：按 key 排序并排除易变的时间字段
+	var b strings.Builder
 
-	// 订单部分
+	// 订单部分（按 OrderID 排序）
 	orderKeys := make([]string, 0, len(s.Orders))
 	for k := range s.Orders {
 		orderKeys = append(orderKeys, k)
@@ -86,12 +88,13 @@ func (s *StateSnapshot) CalculateChecksum() string {
 
 	for _, id := range orderKeys {
 		entry := s.Orders[id]
-		fmt.Fprintf(h, "O:%s:%s:%s:%d:%d:%d:%s|",
-			entry.OrderID, entry.UserID, entry.Symbol,
+		// 按固定字段顺序拼接，注意不包含 CreatedAt/UpdatedAt（动态字段）
+		fmt.Fprintf(&b, "O:%s:%s:%s:%s:%d:%d:%d:%s|",
+			entry.OrderID, entry.UserID, entry.Symbol, entry.Side,
 			entry.Price, entry.Quantity, entry.FilledQty, entry.Status)
 	}
 
-	// 交易部分
+	// 交易部分（按 TradeID 排序）
 	tradeKeys := make([]string, 0, len(s.Trades))
 	for k := range s.Trades {
 		tradeKeys = append(tradeKeys, k)
@@ -100,12 +103,13 @@ func (s *StateSnapshot) CalculateChecksum() string {
 
 	for _, id := range tradeKeys {
 		entry := s.Trades[id]
-		fmt.Fprintf(h, "T:%s:%s:%s:%d:%d|",
-			entry.TradeID, entry.BuyerID, entry.SellerID,
+		// 不包含 CreatedAt
+		fmt.Fprintf(&b, "T:%s:%s:%s:%s:%d:%d|",
+			entry.TradeID, entry.BuyerID, entry.SellerID, entry.Symbol,
 			entry.Price, entry.Quantity)
 	}
 
-	// 持仓部分
+	// 持仓部分（按 UserID 排序）
 	posKeys := make([]string, 0, len(s.Positions))
 	for k := range s.Positions {
 		posKeys = append(posKeys, k)
@@ -114,23 +118,45 @@ func (s *StateSnapshot) CalculateChecksum() string {
 
 	for _, userID := range posKeys {
 		entry := s.Positions[userID]
-		fmt.Fprintf(h, "P:%s:%s:%d:%d:%d:%d|",
+		// 不包含 UpdatedAt
+		fmt.Fprintf(&b, "P:%s:%s:%d:%d:%d:%d|",
 			entry.UserID, entry.Symbol, entry.QuantityHeld,
 			entry.CostBase, entry.RealizedPnl, entry.UnrealizedPnl)
 	}
 
-	// 订单簿部分
+	// 订单簿部分：按价格排序输出 Bid/Ask
 	if s.OrderBook != nil {
-		fmt.Fprintf(h, "B:%s:%d:%d:%d|",
+		fmt.Fprintf(&b, "B:%s:%d:%d:%d|",
 			s.OrderBook.Symbol, s.OrderBook.LastTradePrice,
 			s.OrderBook.BestBid, s.OrderBook.BestAsk)
+
+		// BidBook keys（按价格升序）
+		bidPrices := make([]int64, 0, len(s.OrderBook.BidBook))
+		for p := range s.OrderBook.BidBook {
+			bidPrices = append(bidPrices, p)
+		}
+		sort.Slice(bidPrices, func(i, j int) bool { return bidPrices[i] < bidPrices[j] })
+		for _, price := range bidPrices {
+			fmt.Fprintf(&b, "BB:%d:%d|", price, s.OrderBook.BidBook[price])
+		}
+
+		// AskBook keys（按价格升序）
+		askPrices := make([]int64, 0, len(s.OrderBook.AskBook))
+		for p := range s.OrderBook.AskBook {
+			askPrices = append(askPrices, p)
+		}
+		sort.Slice(askPrices, func(i, j int) bool { return askPrices[i] < askPrices[j] })
+		for _, price := range askPrices {
+			fmt.Fprintf(&b, "AB:%d:%d|", price, s.OrderBook.AskBook[price])
+		}
 	}
 
 	// 计数部分
-	fmt.Fprintf(h, "C:%d:%d:%d:%d|",
+	fmt.Fprintf(&b, "C:%d:%d:%d:%d|",
 		s.EventCount, s.OrderCount, s.TradeCount, s.PositionCount)
 
-	s.Checksum = fmt.Sprintf("%x", h.Sum(nil))
+	sum := sha256.Sum256([]byte(b.String()))
+	s.Checksum = hex.EncodeToString(sum[:])
 	return s.Checksum
 }
 
