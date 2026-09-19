@@ -329,7 +329,7 @@ func (d *SnapshotDiff) GenerateReport() string {
 	if len(d.ChangedOrders) > 0 {
 		sb.WriteString("❌ Changed Orders:\n")
 		for _, change := range d.ChangedOrders {
-			sb.WriteString(fmt.Sprintf("   OrderID=%d: %s expected=%v, actual=%v\n",
+			sb.WriteString(fmt.Sprintf("   OrderID=%s: %s expected=%v, actual=%v\n",
 				change.OrderID, change.Field, change.Expected, change.Actual))
 		}
 	}

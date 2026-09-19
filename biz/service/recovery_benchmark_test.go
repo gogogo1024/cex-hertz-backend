@@ -276,7 +276,7 @@ func TestRecoverySLAComplianceReport(t *testing.T) {
 	})
 	
 	// Print comprehensive SLA report
-	t.Logf("\n" + generateSLAReport(report))
+	t.Logf("%s", generateSLAReport(report))
 }
 
 // TestRecoveryPerformanceProfile 性能分析测试
@@ -366,7 +366,7 @@ func TestRecoveryPerformanceProfile(t *testing.T) {
 	})
 	
 	// Print performance profile
-	t.Logf("\n" + generatePerformanceProfile(profileResults))
+	t.Logf("%s", generatePerformanceProfile(profileResults))
 }
 
 // ============ Helper Functions ============

@@ -321,7 +321,7 @@ func (re *RecoveryExecutor) recoverSingleProcessor(
 		)
 
 		if !isValid {
-			result.ValidationError = fmt.Errorf(errMsg)
+			result.ValidationError = fmt.Errorf("%s", errMsg)
 			result.IsValid = false
 			hlog.Errorf("[RecoveryExecutor] Validation failed for %s:%s: %s",
 				item.processorName, item.symbol, errMsg)

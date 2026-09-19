@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // TestIdempotentRecovery 幂等性测试的核心: 多次crash/恢复应该得到相同的结果
@@ -169,11 +168,11 @@ func TestIdempotentRecoveryWithPartialCommit(t *testing.T) {
 	
 	// Scenario: 处理200个事件，但只有100个被提交
 	// 这意味着恢复应该从event 101开始
-	state := createBaselineState("BTC/USDT", 15, 200)
+	_ = createBaselineState("BTC/USDT", 15, 200)
 	
 	// 模拟只有前一半被提交 (offset checkpoint在100)
 	// 理论上恢复应该重放event 101-200
-	partial := &StateSnapshot{
+	_ = &StateSnapshot{
 		Timestamp:     time.Now(),
 		Orders:        make(map[string]*OrderSnapshot),
 		Trades:        copyTrades(make(map[string]*TradeSnapshot)), // 从100开始新添加的
