@@ -30,8 +30,8 @@ func TestIntegerArithmetic(t *testing.T) {
 	assert.Equal(t, model.QuantityInNano(1000_0000_0000), total)
 }
 
-// TestOrderBookV2Matching 验证 OrderBookV2 的撮合逻辑
-func TestOrderBookV2Matching(t *testing.T) {
+// TestOrderBookMatching 验证 OrderBook 的撮合逻辑
+func TestOrderBookMatching(t *testing.T) {
 	sequencer := NewSequencer()
 	ob := NewOrderBook("BTC/USD", sequencer)
 

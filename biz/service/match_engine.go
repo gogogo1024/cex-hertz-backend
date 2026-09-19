@@ -22,7 +22,7 @@ type MatchEngine struct {
 	orderQueues sync.Map // symbol -> chan OrderQueueItem
 
 	// 每个 symbol 一个 OrderBook
-	orderBooks sync.Map // symbol -> *OrderBookV2
+	orderBooks sync.Map // symbol -> *OrderBook
 
 	// 事件管道
 	eventPipeline *EventPipeline
@@ -148,7 +148,7 @@ func (me *MatchEngine) enqueueOrder(order model.SubmitOrderMsg, priceInNano mode
 // 这保证了同一 symbol 的订单处理顺序，避免了竞态条件
 func (me *MatchEngine) matchWorker(symbol string, queue chan OrderQueueItem) {
 	obAny, _ := me.orderBooks.Load(symbol)
-	ob := obAny.(*OrderBookV2)
+	ob := obAny.(*OrderBook)
 
 	hlog.Infof("[MatchEngine] Started worker for symbol: %s", symbol)
 
@@ -166,7 +166,7 @@ func (me *MatchEngine) matchWorker(symbol string, queue chan OrderQueueItem) {
 
 // processOrder 处理单个订单
 // 这是实际的撮合逻辑
-func (me *MatchEngine) processOrder(symbol string, ob *OrderBookV2, orderMsg model.SubmitOrderMsg) {
+func (me *MatchEngine) processOrder(symbol string, ob *OrderBook, orderMsg model.SubmitOrderMsg) {
 	priceInNano := me.parsePrice(orderMsg.Price)
 	quantityInNano := me.parseQuantity(orderMsg.Quantity)
 
@@ -298,12 +298,12 @@ func (me *MatchEngine) Shutdown() {
 }
 
 // GetOrderBook 获取 symbol 的 OrderBook（用于查询深度）
-func (me *MatchEngine) GetOrderBook(symbol string) *OrderBookV2 {
+func (me *MatchEngine) GetOrderBook(symbol string) *OrderBook {
 	obAny, ok := me.orderBooks.Load(symbol)
 	if !ok {
 		return nil
 	}
-	return obAny.(*OrderBookV2)
+	return obAny.(*OrderBook)
 }
 
 // GetDepth 获取市场深度

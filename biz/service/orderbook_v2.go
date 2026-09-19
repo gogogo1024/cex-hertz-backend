@@ -9,13 +9,13 @@ import (
 	"github.com/huandu/skiplist"
 )
 
-// OrderBookV2 - 改进的 OrderBook 实现
+// OrderBook - 改进的 OrderBook 实现
 // 特点：
 // 1. 使用 int64 精确表示价格和数量（避免浮点误差）
 // 2. 生成事件而不是直接修改状态
 // 3. 支持完整的深度聚合
 // 4. 确定性撮合（便于回放）
-type OrderBookV2 struct {
+type OrderBook struct {
 	symbol string
 
 	// 买单：价格降序
@@ -85,8 +85,8 @@ func (c PriceComparatorAsc) CalcScore(element interface{}) float64 {
 }
 
 // NewOrderBook 创建一个新的 OrderBook
-func NewOrderBook(symbol string, sequencer *Sequencer) *OrderBookV2 {
-	return &OrderBookV2{
+func NewOrderBook(symbol string, sequencer *Sequencer) *OrderBook {
+	return &OrderBook{
 		symbol:    symbol,
 		buys:      skiplist.New(PriceComparatorDesc{}),
 		sells:     skiplist.New(PriceComparatorAsc{}),
@@ -96,7 +96,7 @@ func NewOrderBook(symbol string, sequencer *Sequencer) *OrderBookV2 {
 }
 
 // MatchOrder 撮合订单，返回生成的事件列表
-func (ob *OrderBookV2) MatchOrder(order *OrderBookEntry) ([]model.MatchingEngineEvent, model.QuantityInNano) {
+func (ob *OrderBook) MatchOrder(order *OrderBookEntry) ([]model.MatchingEngineEvent, model.QuantityInNano) {
 	ob.mu.Lock()
 	defer ob.mu.Unlock()
 
@@ -123,7 +123,7 @@ func (ob *OrderBookV2) MatchOrder(order *OrderBookEntry) ([]model.MatchingEngine
 }
 
 // matchBuyOrder 买单撮合
-func (ob *OrderBookV2) matchBuyOrder(order *OrderBookEntry, remainingQty *model.QuantityInNano) []model.MatchingEngineEvent {
+func (ob *OrderBook) matchBuyOrder(order *OrderBookEntry, remainingQty *model.QuantityInNano) []model.MatchingEngineEvent {
 	var events []model.MatchingEngineEvent
 
 	for *remainingQty > 0 && ob.sells.Len() > 0 {
@@ -197,7 +197,7 @@ func (ob *OrderBookV2) matchBuyOrder(order *OrderBookEntry, remainingQty *model.
 }
 
 // matchSellOrder 卖单撮合
-func (ob *OrderBookV2) matchSellOrder(order *OrderBookEntry, remainingQty *model.QuantityInNano) []model.MatchingEngineEvent {
+func (ob *OrderBook) matchSellOrder(order *OrderBookEntry, remainingQty *model.QuantityInNano) []model.MatchingEngineEvent {
 	var events []model.MatchingEngineEvent
 
 	for *remainingQty > 0 && ob.buys.Len() > 0 {
@@ -271,7 +271,7 @@ func (ob *OrderBookV2) matchSellOrder(order *OrderBookEntry, remainingQty *model
 }
 
 // addOrderToBook 将订单加入 OrderBook
-func (ob *OrderBookV2) addOrderToBook(order *OrderBookEntry, qty model.QuantityInNano) {
+func (ob *OrderBook) addOrderToBook(order *OrderBookEntry, qty model.QuantityInNano) {
 	var book *skiplist.SkipList
 	if order.Side == "buy" {
 		book = ob.buys
@@ -300,7 +300,7 @@ func (ob *OrderBookV2) addOrderToBook(order *OrderBookEntry, qty model.QuantityI
 
 // GetDepth 获取深度快照（聚合到 price level）
 // 用于生成市场数据
-func (ob *OrderBookV2) GetDepth(levels int) (bids []map[string]string, asks []map[string]string) {
+func (ob *OrderBook) GetDepth(levels int) (bids []map[string]string, asks []map[string]string) {
 	ob.mu.RLock()
 	defer ob.mu.RUnlock()
 
@@ -344,7 +344,7 @@ func (ob *OrderBookV2) GetDepth(levels int) (bids []map[string]string, asks []ma
 }
 
 // CancelOrder 取消订单
-func (ob *OrderBookV2) CancelOrder(orderID string) error {
+func (ob *OrderBook) CancelOrder(orderID string) error {
 	ob.mu.Lock()
 	defer ob.mu.Unlock()
 
