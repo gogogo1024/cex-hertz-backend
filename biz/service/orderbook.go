@@ -172,7 +172,7 @@ func (ob *OrderBook) matchBuyOrder(order *OrderBookEntry, remainingQty *model.Qu
 			MakerOrderID: seller.OrderID,
 			TakerUser:    order.UserID,
 			MakerUser:    seller.UserID,
-			Price:        order.Price, // 以 maker 的报价成交
+			Price:        sellPrice, // ✅ 以 maker(卖方) 的报价成交
 			Quantity:     tradeQty,
 			TakerSide:    "buy",
 		}
