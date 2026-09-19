@@ -113,7 +113,7 @@ type RecoveryExecutor struct {
 	checkpointMgr  *CheckpointManager
 	eventLog       model.EventStore
 	stateValidator *StateValidator
-	lockMgr        *RedisLockManager  // 分布式锁管理器
+	lockMgr        *RedisLockManager // 分布式锁管理器
 
 	mu               sync.RWMutex
 	stats            *RecoveryStats
@@ -384,7 +384,7 @@ func (re *RecoveryExecutor) recoverSingleProcessor(
 				recoveryCtx.Partition,
 				currentKafkaOffset,
 			)
-			
+
 			// 注：所有权Epoch在恢复时通常为最新值
 			// 因为恢复发生在当前所有者持有锁时
 			eventCtx.WithOwnershipEpoch(1, "recovery") // 恢复流程

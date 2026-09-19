@@ -22,11 +22,11 @@ type OrderProcessingContext struct {
 // VerifyOrderOwnershipFencing 验证当前节点是否仍然拥有该分区
 //
 // 用于防止 stale write 问题：
-//  - 订单提交时，节点A拥有分区P
-//  - 缓存了epoch=1
-//  - 分区迁移到节点B，epoch变为2
-//  - 但节点A仍然有老的请求，epoch=1
-//  - 此时应该拒绝处理，防止数据损坏
+//   - 订单提交时，节点A拥有分区P
+//   - 缓存了epoch=1
+//   - 分区迁移到节点B，epoch变为2
+//   - 但节点A仍然有老的请求，epoch=1
+//   - 此时应该拒绝处理，防止数据损坏
 //
 // 返回: (context, error)
 // 如果 err != nil，说明无法获取owner信息
@@ -45,7 +45,7 @@ func VerifyOrderOwnershipFencing(
 		ProcessingNodeID: nodeID,
 		IsFenced:         false,
 	}
-	
+
 	// 快速路径：从Redis获取当前epoch
 	currentEpoch, err := epochMgr.GetEpoch(ctx, partitionID)
 	if err != nil {
@@ -53,9 +53,9 @@ func VerifyOrderOwnershipFencing(
 		hlog.Warnf("[OrderHandler] Epoch check failed for %s: %v", symbol, err)
 		return result, err
 	}
-	
+
 	result.CurrentEpoch = currentEpoch
-	
+
 	// 检查 fencing
 	if cachedEpoch > 0 && cachedEpoch != currentEpoch {
 		// Epoch 不匹配，说明分区所有权已变更
@@ -64,11 +64,11 @@ func VerifyOrderOwnershipFencing(
 			"ownership epoch mismatch: expected %d, got %d (partition may have migrated)",
 			cachedEpoch, currentEpoch,
 		)
-		hlog.Warnf("[OrderHandler] Order fenced: %s (epoch %d != %d)", 
+		hlog.Warnf("[OrderHandler] Order fenced: %s (epoch %d != %d)",
 			symbol, cachedEpoch, currentEpoch)
 		return result, nil
 	}
-	
+
 	return result, nil
 }
 
@@ -80,22 +80,23 @@ func VerifyOrderOwnershipFencing(
 //  3. 如果epoch过期，返回特殊错误码（例如409 Conflict）
 //
 // 示例：
-//  processingCtx, err := handler.OrderOwnershipInterceptor(
-//      ctx, epochMgr, 
-//      req.Symbol, req.PartitionID, req.CachedEpoch,
-//      nodeID,
-//  )
-//  if err != nil {
-//      return handleError(c, err)
-//  }
-//  if processingCtx.IsFenced {
-//      c.JSON(409, map[string]interface{}{
-//          "error": "PARTITION_MIGRATED",
-//          "message": processingCtx.ErrorMsg,
-//          "current_epoch": processingCtx.CurrentEpoch,
-//      })
-//      return
-//  }
+//
+//	processingCtx, err := handler.OrderOwnershipInterceptor(
+//	    ctx, epochMgr,
+//	    req.Symbol, req.PartitionID, req.CachedEpoch,
+//	    nodeID,
+//	)
+//	if err != nil {
+//	    return handleError(c, err)
+//	}
+//	if processingCtx.IsFenced {
+//	    c.JSON(409, map[string]interface{}{
+//	        "error": "PARTITION_MIGRATED",
+//	        "message": processingCtx.ErrorMsg,
+//	        "current_epoch": processingCtx.CurrentEpoch,
+//	    })
+//	    return
+//	}
 func OrderOwnershipInterceptor(
 	ctx context.Context,
 	epochMgr *service.OwnershipEpochManager,
@@ -117,12 +118,12 @@ func GetOwnershipDiagnostics(
 	symbols []string,
 ) map[string]interface{} {
 	diagnostics := make(map[string]interface{})
-	
+
 	for _, symbol := range symbols {
 		// 这里假设有某种方式从symbol获取partitionID
 		// 在真实系统中，可能需要访问partition manager
 		partitionID := fmt.Sprintf("partition:%s", symbol) // 简化示例
-		
+
 		info, err := epochMgr.GetOwnershipInfo(ctx, partitionID)
 		if err != nil {
 			diagnostics[symbol] = map[string]interface{}{
@@ -130,20 +131,20 @@ func GetOwnershipDiagnostics(
 			}
 			continue
 		}
-		
+
 		if info == nil {
 			diagnostics[symbol] = map[string]interface{}{
 				"status": "uninitialized",
 			}
 			continue
 		}
-		
+
 		diagnostics[symbol] = map[string]interface{}{
-			"epoch": info.Epoch,
-			"owner": info.Owner,
+			"epoch":     info.Epoch,
+			"owner":     info.Owner,
 			"timestamp": info.UpdatedAt,
 		}
 	}
-	
+
 	return diagnostics
 }

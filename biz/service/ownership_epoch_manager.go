@@ -12,13 +12,14 @@ import (
 
 // OwnershipEpochManager 管理分区所有权的 Epoch 版本号
 // 存储在 Redis 中以实现高速访问和分布式一致性
-// 
+//
 // Redis 数据结构：
-//  Hash Key: "partition:{partitionID}:ownership"
-//  Fields:
-//    - epoch: 当前所有权的版本号（单调递增）
-//    - owner: 当前所有者节点ID
-//    - updated_at: 最后更新时间戳
+//
+//	Hash Key: "partition:{partitionID}:ownership"
+//	Fields:
+//	  - epoch: 当前所有权的版本号（单调递增）
+//	  - owner: 当前所有者节点ID
+//	  - updated_at: 最后更新时间戳
 type OwnershipEpochManager struct {
 	lockMgr *RedisLockManager
 }
@@ -41,7 +42,7 @@ type OwnershipEpochInfo struct {
 // 用于快速检查（毫秒级，直接从Redis读取）
 func (oem *OwnershipEpochManager) GetEpoch(ctx context.Context, partitionID string) (int64, error) {
 	key := fmt.Sprintf("partition:%s:ownership", partitionID)
-	
+
 	val, err := redis.Client.HGet(ctx, key, "epoch").Result()
 	if err != nil {
 		if err.Error() == "redis: nil" {
@@ -50,38 +51,38 @@ func (oem *OwnershipEpochManager) GetEpoch(ctx context.Context, partitionID stri
 		}
 		return 0, fmt.Errorf("failed to get epoch: %w", err)
 	}
-	
+
 	var epoch int64
 	if _, err := fmt.Sscanf(val, "%d", &epoch); err != nil {
 		return 0, fmt.Errorf("invalid epoch value: %w", err)
 	}
-	
+
 	return epoch, nil
 }
 
 // GetOwnershipInfo 获取完整的所有权信息
 func (oem *OwnershipEpochManager) GetOwnershipInfo(ctx context.Context, partitionID string) (*OwnershipEpochInfo, error) {
 	key := fmt.Sprintf("partition:%s:ownership", partitionID)
-	
+
 	data, err := redis.Client.HGetAll(ctx, key).Result()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ownership info: %w", err)
 	}
-	
+
 	if len(data) == 0 {
 		return nil, nil // 不存在
 	}
-	
+
 	var epoch int64
 	if e, ok := data["epoch"]; ok {
 		fmt.Sscanf(e, "%d", &epoch)
 	}
-	
+
 	var updatedAt int64
 	if u, ok := data["updated_at"]; ok {
 		fmt.Sscanf(u, "%d", &updatedAt)
 	}
-	
+
 	return &OwnershipEpochInfo{
 		Epoch:     epoch,
 		Owner:     data["owner"],
@@ -91,7 +92,7 @@ func (oem *OwnershipEpochManager) GetOwnershipInfo(ctx context.Context, partitio
 
 // UpdateOwnershipEpoch 更新分区的所有权并自动递增Epoch
 // 在分区所有者迁移时调用
-// 
+//
 // 使用Redis Lua脚本保证原子性：
 //  1. 读取当前epoch
 //  2. 检查所有者是否改变
@@ -104,14 +105,14 @@ func (oem *OwnershipEpochManager) UpdateOwnershipEpoch(
 ) (newEpoch int64, err error) {
 	// 使用分布式锁保证原子性
 	lockKey := fmt.Sprintf("partition:%s:ownership_update", partitionID)
-	
+
 	err = oem.lockMgr.WithLock(ctx, lockKey, func(ctx context.Context) error {
 		// 获取当前状态
 		info, err := oem.GetOwnershipInfo(ctx, partitionID)
 		if err != nil {
 			return fmt.Errorf("failed to get current ownership: %w", err)
 		}
-		
+
 		var currentEpoch int64
 		if info != nil {
 			currentEpoch = info.Epoch
@@ -121,30 +122,30 @@ func (oem *OwnershipEpochManager) UpdateOwnershipEpoch(
 				return nil
 			}
 		}
-		
+
 		// 递增epoch
 		newEpoch = currentEpoch + 1
-		
+
 		// 写入Redis
 		key := fmt.Sprintf("partition:%s:ownership", partitionID)
 		pipe := redis.Client.Pipeline()
-		
+
 		pipe.HSet(ctx, key, "epoch", newEpoch)
 		pipe.HSet(ctx, key, "owner", newOwner)
 		pipe.HSet(ctx, key, "updated_at", time.Now().Unix())
 		pipe.Expire(ctx, key, 24*time.Hour) // 24小时过期
-		
+
 		_, err = pipe.Exec(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to update ownership: %w", err)
 		}
-		
-		hlog.Infof("[OwnershipEpochManager] Updated partition %s: owner=%s, epoch=%d", 
+
+		hlog.Infof("[OwnershipEpochManager] Updated partition %s: owner=%s, epoch=%d",
 			partitionID, newOwner, newEpoch)
-		
+
 		return nil
 	})
-	
+
 	return newEpoch, err
 }
 
@@ -152,9 +153,9 @@ func (oem *OwnershipEpochManager) UpdateOwnershipEpoch(
 // 用于在处理事件时进行 Fencing 检查
 //
 // 返回：
-//  - isValid: 是否可以处理（当前epoch与事件epoch匹配）
-//  - currentEpoch: 当前的epoch
-//  - err: 错误
+//   - isValid: 是否可以处理（当前epoch与事件epoch匹配）
+//   - currentEpoch: 当前的epoch
+//   - err: 错误
 func (oem *OwnershipEpochManager) VerifyOwnershipFencing(
 	ctx context.Context,
 	partitionID string,
@@ -164,7 +165,7 @@ func (oem *OwnershipEpochManager) VerifyOwnershipFencing(
 	if err != nil {
 		return false, 0, fmt.Errorf("failed to verify fencing: %w", err)
 	}
-	
+
 	isValid = (currentEpoch == eventEpoch)
 	return
 }
@@ -183,7 +184,7 @@ func (oem *OwnershipEpochManager) FillEventContextWithEpoch(
 	if err != nil {
 		return fmt.Errorf("failed to fill epoch: %w", err)
 	}
-	
+
 	eventCtx.WithOwnershipEpoch(epoch, nodeID)
 	return nil
 }
@@ -200,13 +201,13 @@ func (oem *OwnershipEpochManager) GetOwnershipAuditLog(
 	if err != nil {
 		return nil, err
 	}
-	
+
 	if info == nil {
 		return map[string]interface{}{
 			"status": "uninitialized",
 		}, nil
 	}
-	
+
 	return map[string]interface{}{
 		"partition_id": partitionID,
 		"epoch":        info.Epoch,

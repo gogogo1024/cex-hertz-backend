@@ -29,10 +29,10 @@ func NewRedisLockManager(redisClient *redis.Client) *RedisLockManager {
 type LockOptions struct {
 	// 锁的过期时间（防止死锁）
 	ExpireDuration time.Duration
-	
+
 	// 获取锁的尝试次数
 	MaxRetries int
-	
+
 	// 重试之间的延迟
 	RetryDelay time.Duration
 }
@@ -50,10 +50,11 @@ func DefaultLockOptions() *LockOptions {
 // 类似 Node.js 中的 redlock.using()
 //
 // 示例:
-//  err := lockMgr.WithLock(ctx, "partition:1:owner", func(ctx context.Context) error {
-//      // 在这里进行临界操作
-//      return updatePartitionOwner(ctx, "partition:1", "node-2")
-//  })
+//
+//	err := lockMgr.WithLock(ctx, "partition:1:owner", func(ctx context.Context) error {
+//	    // 在这里进行临界操作
+//	    return updatePartitionOwner(ctx, "partition:1", "node-2")
+//	})
 func (rm *RedisLockManager) WithLock(
 	ctx context.Context,
 	key string,
@@ -77,12 +78,12 @@ func (rm *RedisLockManager) WithLock(
 		if err == nil {
 			break
 		}
-		
+
 		// 解析错误，如果是上下文超时则直接返回
 		if ctx.Err() != nil {
 			return fmt.Errorf("lock context expired: %w", ctx.Err())
 		}
-		
+
 		// 重试
 		if i < opt.MaxRetries-1 {
 			select {
@@ -114,11 +115,12 @@ func (rm *RedisLockManager) WithLock(
 // 如果 locked=true，调用者需要手动调用 mutex.Unlock()
 //
 // 示例:
-//  locked, mutex, err := lockMgr.TryLock(ctx, "event:offset:123")
-//  if locked {
-//      defer mutex.Unlock()
-//      // 执行操作
-//  }
+//
+//	locked, mutex, err := lockMgr.TryLock(ctx, "event:offset:123")
+//	if locked {
+//	    defer mutex.Unlock()
+//	    // 执行操作
+//	}
 func (rm *RedisLockManager) TryLock(
 	ctx context.Context,
 	key string,
@@ -146,13 +148,13 @@ func (rm *RedisLockManager) IsLocked(ctx context.Context, key string) (bool, err
 	if err != nil {
 		return false, err
 	}
-	
+
 	if locked {
 		// 我们成功获取了锁，说明没有被锁住
 		mutex.Unlock()
 		return false, nil
 	}
-	
+
 	return true, nil
 }
 
@@ -168,12 +170,12 @@ func (rm *RedisLockManager) WithEventProcessingLock(
 	fn func(context.Context) error,
 ) error {
 	lockKey := fmt.Sprintf("event:processing:%s:%d:%d", topic, partition, offset)
-	
+
 	opts := &LockOptions{
-		ExpireDuration: 5 * time.Minute,  // 事件处理最多5分钟
-		MaxRetries:     1,                 // 事件不能等待
+		ExpireDuration: 5 * time.Minute, // 事件处理最多5分钟
+		MaxRetries:     1,               // 事件不能等待
 	}
-	
+
 	return rm.WithLock(ctx, lockKey, fn, opts)
 }
 
@@ -185,13 +187,13 @@ func (rm *RedisLockManager) WithPartitionOwnershipUpdate(
 	fn func(context.Context) error,
 ) error {
 	lockKey := fmt.Sprintf("partition:%s:owner_update", partitionID)
-	
+
 	opts := &LockOptions{
-		ExpireDuration: 10 * time.Second,  // 所有权更新快速完成
+		ExpireDuration: 10 * time.Second, // 所有权更新快速完成
 		MaxRetries:     3,
 		RetryDelay:     50 * time.Millisecond,
 	}
-	
+
 	return rm.WithLock(ctx, lockKey, fn, opts)
 }
 
@@ -204,11 +206,11 @@ func (rm *RedisLockManager) WithRecoveryLock(
 	fn func(context.Context) error,
 ) error {
 	lockKey := fmt.Sprintf("recovery:lock:%s:%s", processorName, symbol)
-	
+
 	opts := &LockOptions{
-		ExpireDuration: 30 * time.Minute,  // 恢复可能比较长
-		MaxRetries:     1,                  // 不重试（恢复应该立即执行）
+		ExpireDuration: 30 * time.Minute, // 恢复可能比较长
+		MaxRetries:     1,                // 不重试（恢复应该立即执行）
 	}
-	
+
 	return rm.WithLock(ctx, lockKey, fn, opts)
 }
