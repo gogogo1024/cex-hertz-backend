@@ -52,7 +52,11 @@ func AutoMigrate() error {
 	if GormDB == nil {
 		return gorm.ErrInvalidDB
 	}
-	return GormDB.AutoMigrate(&model.Order{}, &model.Trade{})
+	return GormDB.AutoMigrate(
+		&model.Order{},
+		&model.Trade{},
+		&model.EventOffsetCheckpoint{}, // Event Sourcing V2: Crash recovery checkpoint表
+	)
 }
 func GetPool() *pgxpool.Pool {
 	if PostgresClient == nil {

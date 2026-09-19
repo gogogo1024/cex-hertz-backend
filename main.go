@@ -178,22 +178,23 @@ func registerRoutes(h *server.Hertz) {
 // 确保容器重启后获得相同的标识符，从而复用NodeID
 //
 // 优先级:
-//   1. NODE_IDENTITY 环境变量 (明确指定, 推荐用于Docker)
-//   2. POD_NAME 环境变量 (Kubernetes StatefulSet)
-//   3. HOSTNAME 环境变量 (通常稳定)
-//   4. 本地IP地址 (最后降级, Docker中可能变化)
+//  1. NODE_IDENTITY 环境变量 (明确指定, 推荐用于Docker)
+//  2. POD_NAME 环境变量 (Kubernetes StatefulSet)
+//  3. HOSTNAME 环境变量 (通常稳定)
+//  4. 本地IP地址 (最后降级, Docker中可能变化)
 //
 // 使用方式:
-//   # Kubernetes (deployment/statefulset中):
-//   env:
-//   - name: POD_NAME
-//     valueFrom:
-//       fieldRef:
-//         fieldPath: metadata.name
 //
-//   # Docker Compose中:
-//   environment:
-//     NODE_IDENTITY: "exchange-worker-1"
+//	# Kubernetes (deployment/statefulset中):
+//	env:
+//	- name: POD_NAME
+//	  valueFrom:
+//	    fieldRef:
+//	      fieldPath: metadata.name
+//
+//	# Docker Compose中:
+//	environment:
+//	  NODE_IDENTITY: "exchange-worker-1"
 func getNodeIdentity() string {
 	// 1. 优先使用NODE_IDENTITY (Docker Compose显式设置)
 	if nodeID := os.Getenv("NODE_IDENTITY"); nodeID != "" {

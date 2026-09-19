@@ -9,12 +9,13 @@ import (
 	"github.com/gogogo1024/cex-hertz-backend/biz/model"
 )
 
-// EventPipeline 事件处理管道
+// EventPipeline 事件处理管道（Event Sourcing核心）
 // 负责将事件从 Event Log 分发给多个 Processor
 // 保证：
 // 1. 事件按序处理
 // 2. 支持幂等性（同一事件重复处理结果相同）
 // 3. 支持并发处理（不同 symbol 的事件可以并发，但同一 symbol 的事件保证顺序）
+// 4. 支持crash recovery（通过checkpoint机制）
 type EventPipeline struct {
 	eventLog model.EventStore
 
@@ -28,6 +29,9 @@ type EventPipeline struct {
 	// 用于追踪每个处理器对每个 symbol 的处理进度
 	mu               sync.RWMutex
 	processorOffsets map[string]map[string]uint64 // processorName -> symbol -> lastProcessedSeq
+
+	// Checkpoint管理器（用于crash recovery）
+	checkpointMgr *CheckpointManager
 }
 
 // NewEventPipeline 创建一个新的事件处理管道
@@ -39,7 +43,14 @@ func NewEventPipeline(eventLog model.EventStore) *EventPipeline {
 		ctx:              ctx,
 		cancel:           cancel,
 		processorOffsets: make(map[string]map[string]uint64),
+		checkpointMgr:    nil, // 稍后由SetCheckpointManager设置
 	}
+}
+
+// SetCheckpointManager 设置checkpoint管理器（用于crash recovery）
+// 必须在注册处理器后、处理事件前调用
+func (ep *EventPipeline) SetCheckpointManager(cm *CheckpointManager) {
+	ep.checkpointMgr = cm
 }
 
 // RegisterProcessor 注册一个事件处理器
@@ -114,6 +125,23 @@ func (ep *EventPipeline) dispatchToProcessors(event model.MatchingEngineEvent) e
 
 			// 更新处理进度
 			ep.processorOffsets[procName][symbol] = seq
+
+			// 记录到checkpoint（用于crash recovery）
+			if ep.checkpointMgr != nil {
+				// 简单版本：每个事件都记录一次
+				// 生产环境可以改成批量记录以提高性能
+				ep.checkpointMgr.RecordEventProcessed(
+					procName,
+					symbol,
+					seq,
+					0, // kafkaOffset (稍后集成Kafka时填充)
+					0, // partitionID (稍后集成Kafka时填充)
+					"", // stateChecksum (稍后集成时计算)
+					0, // orderCount (稍后集成时计算)
+					0, // tradeCount (稍后集成时计算)
+				)
+			}
+
 			hlog.Debugf("[EventPipeline] Processor %s processed event, symbol %s, seq %d", procName, symbol, seq)
 		}(processor)
 	}
@@ -125,6 +153,15 @@ func (ep *EventPipeline) dispatchToProcessors(event model.MatchingEngineEvent) e
 	for err := range errChan {
 		if err != nil {
 			return err
+		}
+	}
+
+	// 事件处理完成后，flush checkpoint到数据库
+	if ep.checkpointMgr != nil {
+		if err := ep.checkpointMgr.FlushCheckpoints(); err != nil {
+			hlog.Warnf("[EventPipeline] Failed to flush checkpoints: %v", err)
+			// 不return error，因为事件已经处理成功
+			// checkpoint失败只会影响恢复效率，不影响当前运行
 		}
 	}
 

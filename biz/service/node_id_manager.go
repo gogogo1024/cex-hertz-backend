@@ -53,9 +53,9 @@ func NewNodeIDManager(consulClient *api.Client, nodeAddr string) *NodeIDManager 
 // ⚠️ Docker环境注意事项:
 // - 必须确保nodeAddr在容器重启后保持不变
 // - 推荐使用持久化标识符：
-//   * Kubernetes: $POD_NAME (StatefulSet保证唯一性)
-//   * Docker Compose: 显式设置环境变量NODE_IDENTITY
-//   * 单机: HOSTNAME 或 $CONTAINER_ID
+//   - Kubernetes: $POD_NAME (StatefulSet保证唯一性)
+//   - Docker Compose: 显式设置环境变量NODE_IDENTITY
+//   - 单机: HOSTNAME 或 $CONTAINER_ID
 func (m *NodeIDManager) GetOrAllocateNodeID() (uint64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
