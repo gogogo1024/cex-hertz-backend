@@ -34,7 +34,12 @@ type NodeIDEntry struct {
 }
 
 // NewNodeIDManager 创建NodeID管理器
+// nodeAddr用于节点唯一标识，在Docker中需要确保稳定性
+// 建议传入: os.Getenv("NODE_ID") 或 POD_NAME 或 HOSTNAME（需要确保跨重启唯一）
 func NewNodeIDManager(consulClient *api.Client, nodeAddr string) *NodeIDManager {
+	// Docker环境优化：使用nodeAddr后缀进行去重
+	// 在Kubernetes中，这通常是Pod名称（唯一稳定）
+	// 在Docker Compose中，需要手动设置环境变量确保唯一性
 	return &NodeIDManager{
 		consulClient: consulClient,
 		nodeAddr:     nodeAddr,
@@ -44,9 +49,20 @@ func NewNodeIDManager(consulClient *api.Client, nodeAddr string) *NodeIDManager 
 // GetOrAllocateNodeID 幂等地获取或分配NodeID
 // 如果节点已注册过，返回之前分配的ID
 // 如果是首次注册，分配新的ID
+//
+// ⚠️ Docker环境注意事项:
+// - 必须确保nodeAddr在容器重启后保持不变
+// - 推荐使用持久化标识符：
+//   * Kubernetes: $POD_NAME (StatefulSet保证唯一性)
+//   * Docker Compose: 显式设置环境变量NODE_IDENTITY
+//   * 单机: HOSTNAME 或 $CONTAINER_ID
 func (m *NodeIDManager) GetOrAllocateNodeID() (uint64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if m.nodeAddr == "" {
+		return 0, fmt.Errorf("nodeAddr must not be empty (Docker环境下需要持久化唯一标识)")
+	}
 
 	// 1. 检查是否已经分配过
 	key := nodeRegistryPrefix + m.nodeAddr
@@ -60,7 +76,7 @@ func (m *NodeIDManager) GetOrAllocateNodeID() (uint64, error) {
 	if pair != nil {
 		var entry NodeIDEntry
 		if err := json.Unmarshal(pair.Value, &entry); err == nil {
-			hlog.Infof("[NodeIDManager] Reusing NodeID=%d for node %s", entry.NodeID, m.nodeAddr)
+			hlog.Infof("[NodeIDManager] Reusing NodeID=%d for node %s (DockerAddr=%s)", entry.NodeID, entry.NodeAddr, m.nodeAddr)
 			m.nodeID = entry.NodeID
 			return entry.NodeID, nil
 		}

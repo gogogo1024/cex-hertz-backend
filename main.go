@@ -93,8 +93,13 @@ func initBusiness(cfg *conf.Config, h *server.Hertz) (*server.Hertz, *service.Pa
 	if err := pm.LoadFromConsul(); err != nil {
 		hlog.Fatalf("加载分区表失败: %v", err)
 	}
-	localIP := util.GetLocalIP()
-	localAddr := localIP + ":" + strconv.Itoa(matchPort)
+
+	// ⚠️ Docker环境: 获取持久化的节点标识符(幂等性关键)
+	// 优先级: NODE_IDENTITY > POD_NAME > HOSTNAME > localIP:port
+	nodeIdentity := getNodeIdentity()
+	localAddr := nodeIdentity + ":" + strconv.Itoa(matchPort)
+	hlog.Infof("[main] Node identity=%s, localAddr=%s (用于幂等分配NodeID)", nodeIdentity, localAddr)
+
 	wsServer := cexserver.NewWebSocketServer(":"+hsPort, pm, localAddr)
 	broadcaster := func(symbol string, msg []byte) {
 		cexserver.Broadcast(symbol, msg)
@@ -167,4 +172,46 @@ func registerRoutes(h *server.Hertz) {
 	orderGroup.GET("/trades", handler.GetTrades)
 	orderGroup.GET("/ticker", handler.GetTicker)
 	orderGroup.GET("/kline", handler.GetKline)
+}
+
+// getNodeIdentity 获取持久化的节点标识符(Docker环境关键)
+// 确保容器重启后获得相同的标识符，从而复用NodeID
+//
+// 优先级:
+//   1. NODE_IDENTITY 环境变量 (明确指定, 推荐用于Docker)
+//   2. POD_NAME 环境变量 (Kubernetes StatefulSet)
+//   3. HOSTNAME 环境变量 (通常稳定)
+//   4. 本地IP地址 (最后降级, Docker中可能变化)
+//
+// 使用方式:
+//   # Kubernetes (deployment/statefulset中):
+//   env:
+//   - name: POD_NAME
+//     valueFrom:
+//       fieldRef:
+//         fieldPath: metadata.name
+//
+//   # Docker Compose中:
+//   environment:
+//     NODE_IDENTITY: "exchange-worker-1"
+func getNodeIdentity() string {
+	// 1. 优先使用NODE_IDENTITY (Docker Compose显式设置)
+	if nodeID := os.Getenv("NODE_IDENTITY"); nodeID != "" {
+		return nodeID
+	}
+
+	// 2. 其次使用POD_NAME (Kubernetes StatefulSet)
+	if podName := os.Getenv("POD_NAME"); podName != "" {
+		return podName
+	}
+
+	// 3. 再次使用HOSTNAME (开发环境或Docker默认)
+	if hostname, err := os.Hostname(); err == nil && hostname != "" {
+		return hostname
+	}
+
+	// 4. 最后降级到本地IP:端口 (不推荐用于分布式, 可能重启后变化)
+	localIP := util.GetLocalIP()
+	hlog.Warnf("[main] NODE_IDENTITY/POD_NAME/HOSTNAME都未设置, 降级使用localIP=%s (⚠️ Docker中可能不稳定)", localIP)
+	return localIP
 }

@@ -25,6 +25,38 @@ type PartitionAwareMatchEngine struct {
 
 // NewPartitionAwareMatchEngine 创建支持动态分区的撮合引擎
 // 自动从Consul幂等地分配NodeID
+//
+// ⚠️ Docker环境使用说明 (重要):
+// localAddr必须在容器重启前后保持一致，用作节点的持久化唯一标识符:
+//
+//   Kubernetes推荐方案: 使用POD_NAME (StatefulSet保证唯一性)
+//     localAddr = os.Getenv("POD_NAME")  // 例: "worker-0"
+//     在Deployment中:
+//       env:
+//       - name: POD_NAME
+//         valueFrom:
+//           fieldRef:
+//             fieldPath: metadata.name
+//
+//   Docker Compose推荐方案: 显式设置CONTAINER_IDENTITY
+//     localAddr = os.Getenv("CONTAINER_IDENTITY")  // 例: "exchange-worker-1"
+//     在docker-compose.yml中:
+//       services:
+//         worker1:
+//           environment:
+//             CONTAINER_IDENTITY: "exchange-worker-1"
+//         worker2:
+//           environment:
+//             CONTAINER_IDENTITY: "exchange-worker-2"
+//
+//   单机/开发环境: HOSTNAME通常稳定
+//     localAddr = os.Getenv("HOSTNAME")
+//
+// ❌ 不推荐使用:
+//   - 容器IP地址 (重启后变化)
+//   - 随机生成的标识符 (幂等性失效)
+//   - 时间戳组件 (会导致每次启动分配新NodeID)
+//
 func NewPartitionAwareMatchEngine(
 	pm *PartitionManager,
 	localAddr string,
