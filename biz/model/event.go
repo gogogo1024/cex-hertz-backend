@@ -177,3 +177,75 @@ type EventProcessor interface {
 	ProcessEvent(event MatchingEngineEvent) error
 	ProcessorName() string
 }
+
+// ===== Persistent Event Store (Phase 2) =====
+
+// PersistentEvent 持久化事件存储模型
+// Append-only：只允许插入，不允许修改或删除
+// 支持完整的事件历史回放和崩溃恢复
+type PersistentEvent struct {
+	// 数据库主键（自增）
+	ID int64 `gorm:"primaryKey;column:id"`
+
+	// 分布式全局序列号
+	// 计算方式：(NodeID << 40) | LocalSeq
+	// 用途：事件唯一标识 + 分区内排序
+	GlobalSeq int64 `gorm:"column:global_seq;uniqueIndex"`
+
+	// 事件类型（TradeExecuted、OrderCancelled等）
+	EventType string `gorm:"column:event_type;index"`
+
+	// 聚合根 ID（如 symbol、user-id）
+	AggregateID string `gorm:"column:aggregate_id"`
+
+	// 聚合根类型（OrderBook、Position等）
+	AggregateType string `gorm:"column:aggregate_type"`
+
+	// 交易对（如 BTC/USDT），可为空
+	Symbol string `gorm:"column:symbol;index"`
+
+	// 事件负载（JSON）
+	Payload string `gorm:"column:payload;type:text"`
+
+	// 事件时间戳（毫秒级，业务时间）
+	EventTimestamp int64 `gorm:"column:event_timestamp"`
+
+	// 创建时间（入库时间）
+	CreatedAt int64 `gorm:"column:created_at;autoCreateTime:milli;index"`
+
+	// 版本控制（用于演进事件 schema）
+	Version int `gorm:"column:version;default:1"`
+}
+
+// TableName 指定表名
+func (PersistentEvent) TableName() string {
+	return "events"
+}
+
+// PersistentEventStore 持久化事件存储接口
+// 用于替代 InMemoryEventLog
+type PersistentEventStore interface {
+	// 写入单个事件
+	WriteEvent(event *PersistentEvent) error
+
+	// 批量写入事件
+	WriteEventsBatch(events []*PersistentEvent) error
+
+	// 查询特定聚合根的所有事件
+	GetAggregateEvents(aggregateType, aggregateID string) ([]*PersistentEvent, error)
+
+	// 查询指定符号的事件（订单簿重建）
+	GetSymbolEvents(symbol string, startSeq, endSeq int64) ([]*PersistentEvent, error)
+
+	// 获取全局事件流（从特定序列号开始）
+	GetGlobalEventStream(startSeq int64, limit int) ([]*PersistentEvent, error)
+
+	// 获取最新的序列号
+	GetLatestGlobalSeq() (int64, error)
+
+	// 统计事件数量
+	CountEvents(aggregateType, aggregateID string) (int64, error)
+
+	// 清理旧事件（可选归档）
+	ArchiveEventsBefore(timestamp int64) (int64, error)
+}
