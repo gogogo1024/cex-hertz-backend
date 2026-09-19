@@ -314,3 +314,28 @@ func (me *MatchEngine) GetDepth(symbol string, levels int) (bids []map[string]st
 	}
 	return ob.GetDepth(levels)
 }
+
+// === Crash Recovery Support Methods ===
+
+// GetEventPipeline 获取事件管道（用于recovery）
+func (me *MatchEngine) GetEventPipeline() *EventPipeline {
+	return me.eventPipeline
+}
+
+// GetEventLog 获取事件日志（用于recovery的event replay）
+func (me *MatchEngine) GetEventLog() model.EventStore {
+	return me.eventLog
+}
+
+// GetSequencer 获取序列号生成器
+func (me *MatchEngine) GetSequencer() *Sequencer {
+	return me.sequencer
+}
+
+// GetPositions 获取所有持仓（用于crash recovery验证）
+// 返回一个空的位置映射（实际实现应该从状态管理器获取）
+func (me *MatchEngine) GetPositions() map[string]*model.Position {
+	// TODO: 从持仓管理器中获取真实的持仓数据
+	// 现在返回空映射作为占位符
+	return make(map[string]*model.Position)
+}

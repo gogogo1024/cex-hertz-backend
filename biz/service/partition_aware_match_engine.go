@@ -199,3 +199,55 @@ func (pa *PartitionAwareMatchEngine) GetLocalSymbols() []string {
 	})
 	return symbols
 }
+
+// === Crash Recovery Support Methods ===
+
+// GetCheckpointManager 获取checkpoint管理器（用于crash recovery）
+func (pa *PartitionAwareMatchEngine) GetCheckpointManager() *CheckpointManager {
+	pipeline := pa.GetEventPipeline()
+	if pipeline != nil {
+		return pipeline.GetCheckpointManager()
+	}
+	return nil
+}
+
+// GetEventLog 获取事件日志（用于crash recovery的replay）
+func (pa *PartitionAwareMatchEngine) GetEventLog() model.EventStore {
+	if pa.MatchEngine != nil {
+		return pa.MatchEngine.eventLog
+	}
+	return nil
+}
+
+// GetEventPipeline 获取事件管道
+func (pa *PartitionAwareMatchEngine) GetEventPipeline() *EventPipeline {
+	if pa.MatchEngine != nil {
+		return pa.MatchEngine.eventPipeline
+	}
+	return nil
+}
+
+// GetProcessor 获取指定名称的处理器（用于crash recovery）
+func (pa *PartitionAwareMatchEngine) GetProcessor(processorName string) model.EventProcessor {
+	pipeline := pa.GetEventPipeline()
+	if pipeline != nil {
+		return pipeline.GetProcessor(processorName)
+	}
+	return nil
+}
+
+// GetPositions 获取当前的所有持仓（用于crash recovery验证）
+func (pa *PartitionAwareMatchEngine) GetPositions() map[string]*model.Position {
+	if pa.MatchEngine != nil {
+		return pa.MatchEngine.GetPositions()
+	}
+	return make(map[string]*model.Position)
+}
+
+// GetSequencer 获取序列号生成器
+func (pa *PartitionAwareMatchEngine) GetSequencer() *Sequencer {
+	if pa.MatchEngine != nil {
+		return pa.MatchEngine.sequencer
+	}
+	return nil
+}

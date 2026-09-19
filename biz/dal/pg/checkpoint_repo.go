@@ -95,10 +95,10 @@ func (r *CheckpointRepo) GetRecoveryContext(processorName, symbol string) (*mode
 	}
 
 	ctx := &model.RecoveryContext{
-		Symbol:             symbol,
-		ProcessorName:      processorName,
-		RecoveryStartTime:  time.Now(),
-		RecoverySuccess:    false,
+		Symbol:            symbol,
+		ProcessorName:     processorName,
+		RecoveryStartTime: time.Now(),
+		RecoverySuccess:   false,
 	}
 
 	if summary != nil {

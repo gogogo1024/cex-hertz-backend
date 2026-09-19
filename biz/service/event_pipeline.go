@@ -134,11 +134,11 @@ func (ep *EventPipeline) dispatchToProcessors(event model.MatchingEngineEvent) e
 					procName,
 					symbol,
 					seq,
-					0, // kafkaOffset (稍后集成Kafka时填充)
-					0, // partitionID (稍后集成Kafka时填充)
+					0,  // kafkaOffset (稍后集成Kafka时填充)
+					0,  // partitionID (稍后集成Kafka时填充)
 					"", // stateChecksum (稍后集成时计算)
-					0, // orderCount (稍后集成时计算)
-					0, // tradeCount (稍后集成时计算)
+					0,  // orderCount (稍后集成时计算)
+					0,  // tradeCount (稍后集成时计算)
 				)
 			}
 
@@ -202,6 +202,24 @@ func (ep *EventPipeline) GetProcessorOffset(processorName, symbol string) uint64
 		return offsets[symbol]
 	}
 	return 0
+}
+
+// GetProcessor 获取指定名称的处理器（用于crash recovery）
+func (ep *EventPipeline) GetProcessor(processorName string) model.EventProcessor {
+	ep.mu.RLock()
+	defer ep.mu.RUnlock()
+
+	for _, processor := range ep.processors {
+		if processor.ProcessorName() == processorName {
+			return processor
+		}
+	}
+	return nil
+}
+
+// GetCheckpointManager 获取checkpoint管理器（用于crash recovery）
+func (ep *EventPipeline) GetCheckpointManager() *CheckpointManager {
+	return ep.checkpointMgr
 }
 
 // Shutdown 优雅关闭事件管道
