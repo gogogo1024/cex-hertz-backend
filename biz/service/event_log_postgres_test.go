@@ -45,7 +45,7 @@ func TestPostgresEventLog_AppendEvent(t *testing.T) {
 		TakerUser:    "user1",
 		MakerUser:    "user2",
 		Price:        50000 * 1e8, // 50000 in nano
-		Quantity:     1 * 1e8,      // 1 in nano
+		Quantity:     1 * 1e8,     // 1 in nano
 		TakerSide:    "buy",
 	}
 

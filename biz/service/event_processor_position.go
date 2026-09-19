@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/cloudwego/hertz/pkg/common/hlog"
-	"github.com/gogogo1024/cex-hertz-backend/biz/model"
 	"github.com/gogogo1024/cex-hertz-backend/biz/dal/pg"
+	"github.com/gogogo1024/cex-hertz-backend/biz/model"
 	"gorm.io/gorm"
 )
 
@@ -17,10 +17,10 @@ import (
 // 确保即使重复处理同一事件，也不会重复更新持仓
 //
 // 事务化保证（Transactional Outbox Pattern）：
-//   1. 业务数据更新和 outbox 条目在同一数据库事务内提交
-//   2. 事务成功：业务数据 + outbox 条目都持久化
-//   3. 事务失败：两者都回滚（Case A 的源头）
-//   4. Checkpoint 后的 crash 被 outbox dispatcher 恢复（Case B 的缓解）
+//  1. 业务数据更新和 outbox 条目在同一数据库事务内提交
+//  2. 事务成功：业务数据 + outbox 条目都持久化
+//  3. 事务失败：两者都回滚（Case A 的源头）
+//  4. Checkpoint 后的 crash 被 outbox dispatcher 恢复（Case B 的缓解）
 type PositionProcessor struct {
 	// 用于记录已处理的 trade_id，防止重复处理
 	mu              sync.Mutex
@@ -31,7 +31,7 @@ type PositionProcessor struct {
 	sellPositionFn func(userID, symbol, quantity string) error
 
 	// 数据库与 outbox 仓库（用于事务化写入）
-	db        *gorm.DB
+	db         *gorm.DB
 	outboxRepo *pg.OutboxRepo
 }
 
@@ -145,11 +145,11 @@ func (pp *PositionProcessor) handleTradeExecuted(e *model.TradeExecutedEvent) er
 // 保证业务数据更新和 outbox 条目的原子性
 //
 // 流程：
-//   1. 开始数据库事务
-//   2. 在事务内更新业务数据（持仓）
-//   3. 在同一事务内写入 outbox 条目
-//   4. 事务提交或回滚
-//   5. Outbox dispatcher 异步读取并发布事件
+//  1. 开始数据库事务
+//  2. 在事务内更新业务数据（持仓）
+//  3. 在同一事务内写入 outbox 条目
+//  4. 事务提交或回滚
+//  5. Outbox dispatcher 异步读取并发布事件
 func (pp *PositionProcessor) handleTradeExecutedTransactional(e *model.TradeExecutedEvent) error {
 	pp.mu.Lock()
 	defer pp.mu.Unlock()

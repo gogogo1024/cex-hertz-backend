@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/gogogo1024/cex-hertz-backend/biz/dal/pg"
 	"github.com/gogogo1024/cex-hertz-backend/biz/model"
+	"github.com/stretchr/testify/assert"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -194,19 +194,22 @@ func TestOutboxDispatcherPublishSuccess(t *testing.T) {
 
 // TestOutboxPatternCaseA crash 在 checkpoint 前发生
 // 场景：
-//   DB UPDATE 成功 ✓
-//   Outbox write 成功 ✓
-//   Checkpoint 写入失败 ✗
-//   Process crash ✗
+//
+//	DB UPDATE 成功 ✓
+//	Outbox write 成功 ✓
+//	Checkpoint 写入失败 ✗
+//	Process crash ✗
 //
 // 恢复：
-//   重启后，相同的事件可能再次到达 event pipeline
-//   但 PositionProcessor 的内存幂等检查只在同一进程内有效
-//   在实际应用中，应该使用数据库来存储幂等性状态
+//
+//	重启后，相同的事件可能再次到达 event pipeline
+//	但 PositionProcessor 的内存幂等检查只在同一进程内有效
+//	在实际应用中，应该使用数据库来存储幂等性状态
 //
 // 测试展示：
-//   处理成功后，outbox 条目存在且未发布
-//   Dispatcher 可以稍后发送这些条目，确保可靠性
+//
+//	处理成功后，outbox 条目存在且未发布
+//	Dispatcher 可以稍后发送这些条目，确保可靠性
 func TestOutboxPatternCaseA(t *testing.T) {
 	t.Parallel()
 
@@ -267,18 +270,19 @@ func TestOutboxPatternCaseA(t *testing.T) {
 	// 3. 结合 outbox 和 event 消费 offset 管理完整的可靠性保证
 }
 
-
 // TestOutboxPatternCaseB checkpoint 成功但 DB UPDATE 失败
 // 场景（更严格）：
-//   Checkpoint 写入成功 ✓
-//   DB UPDATE 失败 ✗
-//   Process crash ✗
+//
+//	Checkpoint 写入成功 ✓
+//	DB UPDATE 失败 ✗
+//	Process crash ✗
 //
 // 恢复（数据一致性缓解）：
-//   Checkpoint 已提交，系统认为事件已处理
-//   但由于 DB UPDATE 失败，业务数据未更新
-//   需要监控检测：checkpoint 记录 > 实际处理数据
-//   Outbox 条目失败，dispatcher 可以重试或人工审计
+//
+//	Checkpoint 已提交，系统认为事件已处理
+//	但由于 DB UPDATE 失败，业务数据未更新
+//	需要监控检测：checkpoint 记录 > 实际处理数据
+//	Outbox 条目失败，dispatcher 可以重试或人工审计
 func TestOutboxPatternCaseB_Monitoring(t *testing.T) {
 	t.Parallel()
 

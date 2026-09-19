@@ -13,13 +13,13 @@ import (
 // OutboxDispatcher 异步读取并发布 outbox 中的事件
 // 确保 outbox pattern 的可靠性
 type OutboxDispatcher struct {
-	outboxRepo *pg.OutboxRepo
+	outboxRepo    *pg.OutboxRepo
 	kafkaProducer interface{} // 真实实现中应该是 Kafka producer
-	batchSize  int
-	maxRetries int
-	ticker     *time.Ticker
-	stopCh     chan bool
-	isRunning  bool
+	batchSize     int
+	maxRetries    int
+	ticker        *time.Ticker
+	stopCh        chan bool
+	isRunning     bool
 }
 
 // NewOutboxDispatcher 创建 outbox 分发器

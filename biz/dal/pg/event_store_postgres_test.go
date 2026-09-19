@@ -3,8 +3,8 @@ package pg
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/gogogo1024/cex-hertz-backend/biz/model"
+	"github.com/stretchr/testify/assert"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -300,10 +300,10 @@ func TestEventStoreReplay(t *testing.T) {
 
 	// 模拟一系列交易事件
 	trades := []struct {
-		seq       int64
-		symbol    string
-		price     int64
-		quantity  float64
+		seq      int64
+		symbol   string
+		price    int64
+		quantity float64
 	}{
 		{1, "BTC/USDT", 50000, 1.0},
 		{2, "BTC/USDT", 50100, 0.5},

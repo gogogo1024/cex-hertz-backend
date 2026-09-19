@@ -76,12 +76,12 @@ func NewPartitionAwareMatchEngine(
 	// 2. 创建基础的事件处理基础设施
 	// 使用分布式Sequencer（带NodeID），确保全局唯一的seq
 	sequencer := NewSequencerWithNodeID(nodeID)
-	
+
 	// 使用 PostgreSQL 实现的持久化事件存储
 	// Phase 2.2 迁移：从 InMemoryEventLog 替换为 PostgresEventLog
 	persistentEventStore := pg.NewPostgresPersistentEventStore(pg.GormDB)
 	eventLog := NewPostgresEventLog(persistentEventStore, sequencer)
-	
+
 	eventPipeline := NewEventPipeline(eventLog)
 
 	// 2.5 初始化CheckpointManager（用于crash recovery）
