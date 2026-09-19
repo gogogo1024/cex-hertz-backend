@@ -34,7 +34,7 @@ func InitBroadcastPool(size int) error {
 }
 
 type Engine interface {
-	SubmitOrder(order model.SubmitOrderMsg)
+	SubmitOrder(order model.SubmitOrderMsg) error
 	// 可扩展更多方法
 }
 

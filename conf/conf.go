@@ -163,17 +163,16 @@ func initConf() {
 	v.SetConfigType("yaml")
 	v.AutomaticEnv()
 
-	//// 支持多路径查找，兼容 IDE/workspace
-	v.AddConfigPath(fmt.Sprintf("conf/%s", env))    // conf/test/
-	v.AddConfigPath(fmt.Sprintf("../conf/%s", env)) // ../conf/test/
-	//v.AddConfigPath(".")                            // 当前目录
-	//v.AddConfigPath("..")                           // 上级目录
-	//// 新增：项目根目录的 conf/test
-	//projectRoot, _ := os.Getwd()
-	//for i := 0; i < 5; i++ { // 最多向上5级
-	//	confPath := filepath.Join(projectRoot, strings.Repeat("../", i), "conf", env)
-	//	v.AddConfigPath(confPath)
-	//}
+	// 支持多路径查找，兼容 IDE/workspace 和不同工作目录
+	paths := []string{
+		fmt.Sprintf("conf/%s", env),       // conf/test/ (项目根目录)
+		fmt.Sprintf("../conf/%s", env),    // ../conf/test/ (biz 子目录)
+		fmt.Sprintf("../../conf/%s", env), // ../../conf/test/ (biz/service 子目录)
+	}
+	for _, path := range paths {
+		v.AddConfigPath(path)
+	}
+
 	if err := v.ReadInConfig(); err != nil {
 		panic(fmt.Sprintf("读取配置文件失败: %v", err))
 	}

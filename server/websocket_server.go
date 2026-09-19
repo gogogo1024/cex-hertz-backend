@@ -363,7 +363,9 @@ func NewWebSocketServer(addr string, pm *service.PartitionManager, localAddr str
 					}
 					if matchEngine != nil {
 						log.Printf("[WS] calling matchEngine.SubmitOrder for symbol=%s", symbol)
-						matchEngine.SubmitOrder(order)
+						if err := matchEngine.SubmitOrder(order); err != nil {
+							log.Printf("[WS] SubmitOrder failed for symbol=%s: %v", symbol, err)
+						}
 					}
 					ack := []byte(`{"type":"order_ack","symbol":"` + symbol + `"}`)
 					if err := conn.WriteMessage(mt, ack); err != nil {

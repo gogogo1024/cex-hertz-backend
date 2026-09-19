@@ -16,7 +16,15 @@ func TestMain(m *testing.M) {
 	if err := pg.AutoMigrate(); err != nil {
 		panic("GORM 自动迁移失败: " + err.Error())
 	}
-	os.Exit(m.Run())
+
+	// 清理测试数据（删除测试用的 order ID，使用 Unscoped 硬删除）
+	testOrderIDs := []string{"order1", "order2"}
+	for _, orderID := range testOrderIDs {
+		pg.GormDB.Unscoped().Where("order_id = ?", orderID).Delete(&model.Order{})
+	}
+
+	code := m.Run()
+	os.Exit(code)
 }
 
 func TestInsertOrder(t *testing.T) {
@@ -47,13 +55,15 @@ func TestGetOrderByID(t *testing.T) {
 }
 
 func TestCreateOrder(t *testing.T) {
+	price, _ := model.ParsePrice("20000")
+	quantity, _ := model.ParseQuantity("2")
 	order := &model.Order{
 		OrderID:   "order2",
 		UserID:    "user2",
 		Symbol:    "BTCUSDT",
 		Side:      "sell",
-		Price:     "20000",
-		Quantity:  "2",
+		Price:     int64(price),
+		Quantity:  int64(quantity),
 		Status:    "open",
 		CreatedAt: 1620000001,
 		UpdatedAt: 1620000001,

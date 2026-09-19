@@ -1,12 +1,16 @@
+//go:build !no_rocksdb
+// +build !no_rocksdb
+
 package rocksdb
 
 import (
 	"encoding/json"
-	"github.com/cloudwego/hertz/pkg/common/hlog"
-	"github.com/linxGnu/grocksdb"
 	"os"
 	"sync"
 	"time"
+
+	"github.com/cloudwego/hertz/pkg/common/hlog"
+	"github.com/linxGnu/grocksdb"
 )
 
 // CompensateOrder 补偿订单结构体
