@@ -17,6 +17,7 @@ import (
 	"github.com/cloudwego/hertz/pkg/common/hlog"
 	"github.com/cloudwego/hertz/pkg/common/utils"
 	"github.com/gogogo1024/cex-hertz-backend/biz/dal"
+	"github.com/gogogo1024/cex-hertz-backend/biz/dal/kafka"
 	"github.com/gogogo1024/cex-hertz-backend/biz/handler"
 	"github.com/gogogo1024/cex-hertz-backend/biz/service"
 	"github.com/gogogo1024/cex-hertz-backend/biz/util"
@@ -36,6 +37,7 @@ import (
 func main() {
 	cfg := conf.GetConf()
 	dal.Init()
+	defer kafka.CloseAllWriters() // Event Sourcing V2: 关闭Kafka Writers
 	consulClient := initConsul(cfg)
 	h := initHertzServer(cfg, consulClient)
 	wsServer, pm, localAddr := initBusiness(cfg, h)
@@ -47,7 +49,6 @@ func main() {
 	go h.Spin()
 	go wsServer.Spin()
 	waitForExit()
-	service.ShutdownOrderKafkaWriter()
 }
 func initConsul(cfg *conf.Config) *consulapi.Client {
 	config := consulapi.DefaultConfig()
@@ -73,9 +74,7 @@ func initHertzServer(cfg *conf.Config, consulClient *consulapi.Client) *server.H
 		}),
 		server.WithExitWaitTime(10*time.Second),
 	)
-	h.OnShutdown = append(h.OnShutdown, func(ctx context.Context) {
-		service.StopOrderKafkaConsumerWithTimeout(10 * time.Second)
-	})
+	// Event Sourcing V2: Kafka消费者逻辑已由EventPipeline处理，无需显式关闭
 	return h
 }
 
@@ -84,10 +83,7 @@ func initBusiness(cfg *conf.Config, h *server.Hertz) (*server.Hertz, *service.Pa
 	if len(hsPort) > 0 && hsPort[0] == ':' {
 		hsPort = hsPort[1:]
 	}
-	service.InitKafkaWriter(cfg.Kafka.Brokers, cfg.Kafka.Topics["trade"])
-	service.InitOrderKafkaWriter(cfg.Kafka.Topics["order"])
-	service.RecoverCompensateOrders()
-	service.StartOrderKafkaConsumer(cfg.Kafka.Topics["order"])
+	// Event Sourcing V2: Kafka已在dal.Init()中自动初始化，恢复逻辑由EventPipeline处理
 	consulAddrs := cfg.Registry.RegistryAddress
 	matchPort := cfg.MatchEngine.MatchPort
 	pm, err := service.NewPartitionManager(consulAddrs)

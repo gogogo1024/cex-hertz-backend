@@ -37,27 +37,25 @@ func aggregateOrders(orders []model.Order, symbol string) (map[string]*depthItem
 		if o.Symbol != symbol {
 			continue
 		}
-		qty, err := strconv.ParseFloat(o.Quantity, 64)
-		if err != nil {
-			continue
-		}
-		price, err := strconv.ParseFloat(o.Price, 64)
-		if err != nil {
-			continue
-		}
+		// Price 和 Quantity 已经是 int64 nano 格式，需要转换为 float64
+		// PriceInNano = price × 10^8, 所以 price = PriceInNano / 1e8
+		price := float64(o.Price) / 1e8
+		qty := float64(o.Quantity) / 1e8
+		priceStr := strconv.FormatFloat(price, 'f', -1, 64)
+
 		switch o.Side {
 		case "buy":
-			if bidsAgg[o.Price] == nil {
-				bidsAgg[o.Price] = &depthItem{Price: price, PriceStr: o.Price}
+			if bidsAgg[priceStr] == nil {
+				bidsAgg[priceStr] = &depthItem{Price: price, PriceStr: priceStr}
 			}
-			bidsAgg[o.Price].Amount += qty
-			bidsAgg[o.Price].Count++
+			bidsAgg[priceStr].Amount += qty
+			bidsAgg[priceStr].Count++
 		case "sell":
-			if asksAgg[o.Price] == nil {
-				asksAgg[o.Price] = &depthItem{Price: price, PriceStr: o.Price}
+			if asksAgg[priceStr] == nil {
+				asksAgg[priceStr] = &depthItem{Price: price, PriceStr: priceStr}
 			}
-			asksAgg[o.Price].Amount += qty
-			asksAgg[o.Price].Count++
+			asksAgg[priceStr].Amount += qty
+			asksAgg[priceStr].Count++
 		}
 	}
 	return bidsAgg, asksAgg

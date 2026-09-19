@@ -35,7 +35,8 @@ func SubmitOrder(ctx context.Context, c *app.RequestContext) {
 		c.JSON(consts.StatusBadRequest, map[string]interface{}{"error": err.Error()})
 		return
 	}
-	if req.Symbol == "" || req.Side == "" || req.Price == "" || req.Quantity == "" || req.UserID == "" {
+	// Price 和 Quantity 现在是 int64，检查是否为 0（int64 的零值）
+	if req.Symbol == "" || req.Side == "" || req.Price == 0 || req.Quantity == 0 || req.UserID == "" {
 		c.JSON(consts.StatusBadRequest, map[string]interface{}{"error": "missing required fields"})
 		return
 	}

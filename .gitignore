@@ -17,6 +17,7 @@ Thumbs.db
 # ===================
 # Go 相关
 # ===================
+cex-hertz-backend
 *.exe
 *.exe~
 *.test
