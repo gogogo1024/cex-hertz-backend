@@ -20,6 +20,11 @@ type PartitionManager struct {
 	cache       *model.PartitionTable
 	lock        sync.RWMutex
 	watchCancel context.CancelFunc
+	// ownershipFSMs 存放运行时的 OwnershipStateMachine 实例，key 为 partitionID
+	fsmLock       sync.RWMutex
+	ownershipFSMs map[string]*model.OwnershipStateMachine
+	// 注入的 TransferCoordinator（若已设置，则在注册 FSM 时自动注入）
+	transferCoord model.TransferCoordinator
 }
 
 // NewPartitionManager 创建 PartitionManager
@@ -48,8 +53,9 @@ func NewPartitionManager(consulAddrs []string) (*PartitionManager, error) {
 			continue
 		}
 		return &PartitionManager{
-			client: cli,
-			cache:  model.NewPartitionTable(),
+			client:        cli,
+			cache:         model.NewPartitionTable(),
+			ownershipFSMs: make(map[string]*model.OwnershipStateMachine),
 		}, nil
 	}
 	return nil, lastErr
@@ -157,4 +163,52 @@ func (pm *PartitionManager) UpdatePartitionTable(pt *model.PartitionTable) error
 // GetConsulClient 获取Consul客户端（用于其他服务如NodeIDManager）
 func (pm *PartitionManager) GetConsulClient() *api.Client {
 	return pm.client
+}
+
+// RegisterOwnershipFSM 注册或更新分区对应的 OwnershipStateMachine
+// 如果之前已通过 SetupCoordinators 注入了 coordinator，则会在注册时自动注入到 fsm
+func (pm *PartitionManager) RegisterOwnershipFSM(partitionID string, fsm *model.OwnershipStateMachine) {
+	pm.fsmLock.Lock()
+	defer pm.fsmLock.Unlock()
+	pm.ownershipFSMs[partitionID] = fsm
+	if pm.transferCoord != nil && fsm != nil {
+		fsm.SetTransferCoordinator(pm.transferCoord)
+	}
+}
+
+// UnregisterOwnershipFSM 注销分区对应的 FSM（例如在分区释放时）
+func (pm *PartitionManager) UnregisterOwnershipFSM(partitionID string) {
+	pm.fsmLock.Lock()
+	defer pm.fsmLock.Unlock()
+	delete(pm.ownershipFSMs, partitionID)
+}
+
+// GetOwnershipFSM 返回已注册的 FSM（如果存在）
+func (pm *PartitionManager) GetOwnershipFSM(partitionID string) *model.OwnershipStateMachine {
+	pm.fsmLock.RLock()
+	defer pm.fsmLock.RUnlock()
+	return pm.ownershipFSMs[partitionID]
+}
+
+// SetTransferCoordinator 将 coordinator 注入到所有已注册的 FSM，并在后续注册时自动注入
+func (pm *PartitionManager) SetTransferCoordinator(tc model.TransferCoordinator) {
+	pm.fsmLock.Lock()
+	defer pm.fsmLock.Unlock()
+	pm.transferCoord = tc
+	for _, fsm := range pm.ownershipFSMs {
+		if fsm != nil {
+			fsm.SetTransferCoordinator(tc)
+		}
+	}
+}
+
+// ListRegisteredFSMs 返回注册的 FSM 的浅拷贝映射（仅供调试/检查）
+func (pm *PartitionManager) ListRegisteredFSMs() map[string]*model.OwnershipStateMachine {
+	pm.fsmLock.RLock()
+	defer pm.fsmLock.RUnlock()
+	out := make(map[string]*model.OwnershipStateMachine, len(pm.ownershipFSMs))
+	for k, v := range pm.ownershipFSMs {
+		out[k] = v
+	}
+	return out
 }

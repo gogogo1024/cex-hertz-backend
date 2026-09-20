@@ -19,6 +19,7 @@ import (
 	"github.com/cloudwego/hertz/pkg/common/utils"
 	"github.com/gogogo1024/cex-hertz-backend/biz/dal"
 	"github.com/gogogo1024/cex-hertz-backend/biz/dal/kafka"
+	dalpg "github.com/gogogo1024/cex-hertz-backend/biz/dal/pg"
 	"github.com/gogogo1024/cex-hertz-backend/biz/handler"
 	"github.com/gogogo1024/cex-hertz-backend/biz/service"
 	"github.com/gogogo1024/cex-hertz-backend/biz/util"
@@ -44,6 +45,13 @@ func main() {
 	wsServer, pm, localAddr, matchEngine := initBusiness(cfg, h)
 	defer h.Shutdown(context.Background())
 	defer wsServer.Shutdown(context.Background())
+
+	// 启动 Outbox Dispatcher，负责将 outbox 中持久化的事件发送到 Kafka
+	outboxRepo := dalpg.NewOutboxRepo(dalpg.GormDB)
+	outboxDispatcher := service.NewOutboxDispatcher(outboxRepo, 10, cfg.Recovery.MaxRetries)
+	// 使用 500ms 轮询间隔启动（可根据负载调整）
+	outboxDispatcher.Start(context.Background(), 500*time.Millisecond)
+	defer outboxDispatcher.Stop()
 
 	// Phase 2.5: 启动恢复检测与执行
 	if cfg.Recovery.EnableAutoRecovery {
@@ -105,6 +113,11 @@ func initBusiness(cfg *conf.Config, h *server.Hertz) (*server.Hertz, *service.Pa
 		hlog.Fatalf("加载分区表失败: %v", err)
 	}
 
+	// 初始化并注入迁移协调器（OwnershipTransfer 表迁移与 coordinator wiring）
+	if err := service.SetupCoordinators(pm, dalpg.GormDB); err != nil {
+		hlog.Fatalf("SetupCoordinators failed: %v", err)
+	}
+
 	// ⚠️ Docker环境: 获取持久化的节点标识符(幂等性关键)
 	// 优先级: NODE_IDENTITY > POD_NAME > HOSTNAME > localIP:port
 	nodeIdentity := getNodeIdentity()
@@ -120,6 +133,8 @@ func initBusiness(cfg *conf.Config, h *server.Hertz) (*server.Hertz, *service.Pa
 	}
 	matchEngine := service.NewPartitionAwareMatchEngine(pm, localAddr, broadcaster, unicast)
 	cexserver.InjectEngine(matchEngine)
+	// 注入到全局变量，HTTP handler 可通过 service.GlobalMatchEngine 转发下单请求
+	service.GlobalMatchEngine = matchEngine
 	service.MatchResultPusher = cexserver.PushMatchResult
 	return wsServer, pm, localAddr, matchEngine
 }

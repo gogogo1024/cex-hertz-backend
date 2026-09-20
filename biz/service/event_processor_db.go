@@ -2,12 +2,14 @@ package service
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/cloudwego/hertz/pkg/common/hlog"
 	"github.com/gogogo1024/cex-hertz-backend/biz/model"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // DatabaseProcessor 处理事件并将其持久化到数据库
@@ -44,6 +46,9 @@ func NewDatabaseProcessor(db *gorm.DB, batchSize int) *DatabaseProcessor {
 
 // ProcessEvent 处理一个事件
 func (dp *DatabaseProcessor) ProcessEvent(event model.MatchingEngineEvent) error {
+	// 使用数据库唯一约束作为幂等性判定：直接尝试插入，若发生唯一约束冲突，则视为已被其它实例处理并返回 nil。
+	// 订单取消通过更新语句幂等处理
+
 	switch e := event.(type) {
 	case *model.TradeExecutedEvent:
 		return dp.handleTradeExecuted(e)
@@ -65,30 +70,29 @@ func (dp *DatabaseProcessor) ProcessorName() string {
 // 使用幂等性：先查询是否存在，再决定是否插入
 func (dp *DatabaseProcessor) handleTradeExecuted(e *model.TradeExecutedEvent) error {
 	trade := &model.Trade{
-		TradeID:      e.TradeID,
-		Symbol:       e.Symbol(),
-		Price:        fmt.Sprintf("%.8f", float64(e.Price)/1e8), // 转换回浮点数用于显示
-		Quantity:     fmt.Sprintf("%.8f", float64(e.Quantity)/1e8),
+		TradeID: e.TradeID,
+		Symbol:  e.Symbol(),
+		// 统一使用 model.PriceInNano/String 方法来格式化
+		Price:        model.PriceInNano(e.Price).String(),
+		Quantity:     model.QuantityInNano(e.Quantity).String(),
 		Timestamp:    e.Timestamp,
 		TakerOrderID: e.TakerOrderID,
 		MakerOrderID: e.MakerOrderID,
 		Side:         e.TakerSide,
-		EngineID:     "", // 可以从上下文中获取
+		EngineID:     "",
 		TakerUser:    e.TakerUser,
 		MakerUser:    e.MakerUser,
 	}
 
-	// 幂等性：检查成交是否已存在
-	existing := &model.Trade{}
-	if err := dp.db.Where("trade_id = ?", e.TradeID).First(existing).Error; err == nil {
-		// 成交已存在，跳过
-		return nil
+	// 使用 ON CONFLICT DO NOTHING 来原子插入（跨 DB 兼容性由 GORM clause 支持）
+	res := dp.db.Clauses(clause.OnConflict{DoNothing: true}).Create(trade)
+	if res.Error != nil {
+		hlog.Errorf("[DatabaseProcessor] Failed to insert trade: %v", res.Error)
+		return res.Error
 	}
-
-	// 插入新成交
-	if err := dp.db.Create(trade).Error; err != nil {
-		hlog.Errorf("[DatabaseProcessor] Failed to insert trade: %v", err)
-		return err
+	if res.RowsAffected == 0 {
+		hlog.Debugf("[DatabaseProcessor] Duplicate trade detected (no rows affected), skipping insert: %s", e.TradeID)
+		return nil
 	}
 
 	hlog.Debugf("[DatabaseProcessor] Inserted trade: %s", e.TradeID)
@@ -108,22 +112,32 @@ func (dp *DatabaseProcessor) handleOrderSubmitted(e *model.OrderSubmittedEvent) 
 		CreatedAt: e.Timestamp,
 		UpdatedAt: e.Timestamp,
 	}
-
-	// 幂等性：检查订单是否已存在
-	existing := &model.Order{}
-	if err := dp.db.Where("order_id = ?", e.OrderID).First(existing).Error; err == nil {
-		// 订单已存在，跳过
-		return nil
+	// 使用 ON CONFLICT DO NOTHING 来原子插入订单
+	res := dp.db.Clauses(clause.OnConflict{DoNothing: true}).Create(order)
+	if res.Error != nil {
+		hlog.Errorf("[DatabaseProcessor] Failed to insert order: %v", res.Error)
+		return res.Error
 	}
-
-	// 插入新订单
-	if err := dp.db.Create(order).Error; err != nil {
-		hlog.Errorf("[DatabaseProcessor] Failed to insert order: %v", err)
-		return err
+	if res.RowsAffected == 0 {
+		hlog.Debugf("[DatabaseProcessor] Duplicate order detected (no rows affected), skipping insert: %s", e.OrderID)
+		return nil
 	}
 
 	hlog.Debugf("[DatabaseProcessor] Inserted order: %s", e.OrderID)
 	return nil
+}
+
+// isUniqueConstraintError 尝试识别数据库返回的唯一约束冲突错误。
+// 这里使用宽松的字符串匹配以覆盖 sqlite/postgres/mysql 的常见错误文本。
+func isUniqueConstraintError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "unique constraint") || strings.Contains(msg, "unique") || strings.Contains(msg, "duplicate key") || strings.Contains(msg, "constraint failed") || strings.Contains(msg, "duplicate") {
+		return true
+	}
+	return false
 }
 
 // handleOrderCancelled 处理订单取消事件

@@ -41,6 +41,10 @@ type EventPipeline struct {
 	kafkaOffsets  map[string]map[string]int64 // processorName -> symbol -> lastKafkaOffset
 	kafkaOffsetMu sync.RWMutex                // 保护 kafkaOffsets 的读写
 
+	// per-processor+symbol locks，保证同一 processor 对同一 symbol 的处理为单飞
+	// key 格式： processorName + 0x00 + symbol
+	procSymLocks sync.Map // map[string]*sync.Mutex
+
 	// Checkpoint管理器（用于crash recovery）
 	checkpointMgr *CheckpointManager
 
@@ -183,6 +187,12 @@ func (ep *EventPipeline) dispatchToProcessorsInternal(
 			defer wg.Done()
 
 			procName := p.ProcessorName()
+			// 使用 per-processor+symbol 的单飞锁，保证相同 processor 对相同 symbol 的事件串行执行
+			lockKey := procName + "\x00" + symbol
+			val, _ := ep.procSymLocks.LoadOrStore(lockKey, &sync.Mutex{})
+			mu := val.(*sync.Mutex)
+			mu.Lock()
+			defer mu.Unlock()
 
 			// 读取当前的 lastSeq（精细锁）
 			ep.offsetsMu.RLock()
@@ -196,7 +206,7 @@ func (ep *EventPipeline) dispatchToProcessorsInternal(
 				return
 			}
 
-			// ===== 处理事件（不持锁） =====
+			// ===== 处理事件（在单飞锁下执行，保证同一 processor+symbol 串行） =====
 			if err := p.ProcessEvent(event); err != nil {
 				hlog.Errorf("[EventPipeline] Processor %s failed to process event: %v", procName, err)
 				errChan <- fmt.Errorf("processor %s: %w", procName, err)

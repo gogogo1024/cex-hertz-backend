@@ -234,9 +234,9 @@ func TestRecoveryWithRealKafkaAndDB(t *testing.T) {
 
 		t.Log(report)
 
-		// 验证时间合理性
-		assert.Greater(t, totalTime, 0)
-		assert.Greater(t, kafkaReadTime, 0)
+		// 验证时间合理性（使用 time.Duration 比较）
+		assert.Greater(t, totalTime, 0*time.Nanosecond)
+		assert.Greater(t, kafkaReadTime, 0*time.Nanosecond)
 		t.Logf("✅ Recovery performance measured: %v total time", totalTime)
 	})
 

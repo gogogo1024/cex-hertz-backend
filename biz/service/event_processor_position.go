@@ -161,8 +161,34 @@ func (pp *PositionProcessor) handleTradeExecutedTransactional(e *model.TradeExec
 	}
 
 	// 在事务内执行业务逻辑和 outbox 写入
+	alreadyProcessed := false
 	err := pp.db.Transaction(func(tx *gorm.DB) error {
-		// Step 1: 执行业务数据更新
+		// 先尝试写入 outbox 条目作为幂等性检查点：
+		// 如果已经存在（unique constraint），说明该事件已被其它实例处理，直接跳过。
+		payloadJSON, _ := json.Marshal(e)
+		outboxEntry := &model.OutboxEntry{
+			EventID:       e.TradeID,
+			EventType:     "TradeExecuted",
+			AggregateID:   e.Symbol(),
+			AggregateType: "OrderBook",
+			Payload:       string(payloadJSON),
+			Published:     false,
+			CreatedAt:     time.Now(),
+			UpdatedAt:     time.Now(),
+		}
+
+		inserted, werr := pp.outboxRepo.WriteOutboxEntryIfNotExists(tx, outboxEntry)
+		if werr != nil {
+			hlog.Errorf("[PositionProcessor] Failed to write outbox entry: %v", werr)
+			return werr
+		}
+		if !inserted {
+			// 已存在，说明其它实例已处理该事件
+			alreadyProcessed = true
+			return nil
+		}
+
+		// 写入 outbox 成功后再执行业务数据更新（写入同一事务）
 		quantityStr := fmt.Sprintf("%.8f", float64(e.Quantity)/1e8)
 		priceStr := fmt.Sprintf("%.8f", float64(e.Price)/1e8)
 
@@ -186,24 +212,6 @@ func (pp *PositionProcessor) handleTradeExecutedTransactional(e *model.TradeExec
 			}
 		}
 
-		// Step 2: 写入 outbox 条目（在同一事务内）
-		payloadJSON, _ := json.Marshal(e)
-		outboxEntry := &model.OutboxEntry{
-			EventID:       e.TradeID,
-			EventType:     "TradeExecuted",
-			AggregateID:   e.Symbol(),
-			AggregateType: "OrderBook",
-			Payload:       string(payloadJSON),
-			Published:     false,
-			CreatedAt:     time.Now(),
-			UpdatedAt:     time.Now(),
-		}
-
-		if err := pp.outboxRepo.WriteOutboxEntry(tx, outboxEntry); err != nil {
-			hlog.Errorf("[PositionProcessor] Failed to write outbox entry: %v", err)
-			return err
-		}
-
 		return nil
 	})
 
@@ -212,7 +220,17 @@ func (pp *PositionProcessor) handleTradeExecutedTransactional(e *model.TradeExec
 		return err
 	}
 
-	// 标记为已处理（幂等性保证）
+	if err != nil {
+		hlog.Errorf("[PositionProcessor] Transaction failed for trade %s: %v", e.TradeID, err)
+		return err
+	}
+
+	if alreadyProcessed {
+		hlog.Infof("[PositionProcessor] Skipping duplicate trade (detected by DB): %s", e.TradeID)
+		return nil
+	}
+
+	// 标记为已处理（内存缓存），便于同一进程内快速跳过
 	pp.processedTrades[e.TradeID] = true
 
 	hlog.Infof("[PositionProcessor] Updated position for trade: %s (taker: %s, maker: %s) with outbox",

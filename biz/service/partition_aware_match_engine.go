@@ -93,7 +93,8 @@ func NewPartitionAwareMatchEngine(
 
 	// 3. 注册所有处理器
 	eventPipeline.RegisterProcessor(NewDatabaseProcessor(nil, 1000))
-	eventPipeline.RegisterProcessor(NewPositionProcessor(nil, nil))
+	// 使用带 outbox 支持的 PositionProcessor，将持仓变更与 outbox 写入放在同一事务中
+	eventPipeline.RegisterProcessor(NewPositionProcessorWithOutbox(pg.GormDB, pg.NewOutboxRepo(pg.GormDB), BuyPosition, SellPosition))
 	eventPipeline.RegisterProcessor(NewWebSocketProcessor(broadcaster, unicaster))
 
 	// 4. 创建基础的 MatchEngine
@@ -136,6 +137,32 @@ func (pa *PartitionAwareMatchEngine) watchPartitionChange() {
 							mySymbols[symbol] = struct{}{}
 						}
 					}
+				}
+			}
+
+			// 按分区管理 OwnershipStateMachine：为当前节点负责的分区创建并注册 FSM；注销不再负责的分区
+			currOwned := make(map[string]struct{})
+			for pid, partition := range pt.Partitions {
+				for _, addr := range partition.Workers {
+					if addr == pa.localAddr {
+						currOwned[pid] = struct{}{}
+						// 如果尚未注册 FSM，则创建并注册（RegisterOwnershipFSM 会自动注入 coordinator）
+						if pa.pm.GetOwnershipFSM(pid) == nil {
+							fsm := model.NewOwnershipStateMachine(pid, pa.localAddr, partition.Symbols)
+							pa.pm.RegisterOwnershipFSM(pid, fsm)
+							hlog.Infof("[PartitionAwareMatchEngine] Registered OwnershipStateMachine for partition: %s", pid)
+						}
+						break
+					}
+				}
+			}
+
+			// 注销不再属于本节点的 FSM
+			registered := pa.pm.ListRegisteredFSMs()
+			for pid := range registered {
+				if _, ok := currOwned[pid]; !ok {
+					pa.pm.UnregisterOwnershipFSM(pid)
+					hlog.Infof("[PartitionAwareMatchEngine] Unregistered OwnershipStateMachine for partition: %s", pid)
 				}
 			}
 

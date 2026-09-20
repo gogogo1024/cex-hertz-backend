@@ -1,6 +1,7 @@
 package pg
 
 import (
+	"sync/atomic"
 	"testing"
 
 	"github.com/gogogo1024/cex-hertz-backend/biz/model"
@@ -8,6 +9,12 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+var testSeqCounter int64
+
+func nextTestGlobalSeq() int64 {
+	return atomic.AddInt64(&testSeqCounter, 1)
+}
 
 // setupEventStoreDB 创建用于测试的事件存储数据库
 func setupEventStoreDB() (*gorm.DB, error) {
@@ -33,8 +40,9 @@ func TestWriteEvent(t *testing.T) {
 
 	store := NewPostgresPersistentEventStore(db)
 
+	seq := nextTestGlobalSeq()
 	event := &model.PersistentEvent{
-		GlobalSeq:      1,
+		GlobalSeq:      seq,
 		EventType:      "TradeExecuted",
 		AggregateID:    "BTC/USDT",
 		AggregateType:  "OrderBook",
@@ -49,7 +57,7 @@ func TestWriteEvent(t *testing.T) {
 
 	// 验证事件已保存
 	var saved *model.PersistentEvent
-	_ = db.Where("global_seq = ?", 1).First(&saved)
+	_ = db.Where("global_seq = ?", seq).First(&saved)
 	assert.NotNil(t, saved)
 	assert.Equal(t, "TradeExecuted", saved.EventType)
 }
@@ -63,9 +71,10 @@ func TestWriteEventsBatch(t *testing.T) {
 
 	store := NewPostgresPersistentEventStore(db)
 
+	start := nextTestGlobalSeq()
 	events := []*model.PersistentEvent{
 		{
-			GlobalSeq:      1,
+			GlobalSeq:      start,
 			EventType:      "TradeExecuted",
 			AggregateID:    "BTC/USDT",
 			AggregateType:  "OrderBook",
@@ -74,7 +83,7 @@ func TestWriteEventsBatch(t *testing.T) {
 			EventTimestamp: 1609459200000,
 		},
 		{
-			GlobalSeq:      2,
+			GlobalSeq:      start + 1,
 			EventType:      "TradeExecuted",
 			AggregateID:    "ETH/USDT",
 			AggregateType:  "OrderBook",
@@ -103,22 +112,23 @@ func TestGetAggregateEvents(t *testing.T) {
 	store := NewPostgresPersistentEventStore(db)
 
 	// 插入不同聚合根的事件
+	start := nextTestGlobalSeq()
 	_ = store.WriteEvent(&model.PersistentEvent{
-		GlobalSeq:     1,
+		GlobalSeq:     start,
 		EventType:     "TradeExecuted",
 		AggregateID:   "BTC/USDT",
 		AggregateType: "OrderBook",
 	})
 
 	_ = store.WriteEvent(&model.PersistentEvent{
-		GlobalSeq:     2,
+		GlobalSeq:     start + 1,
 		EventType:     "TradeExecuted",
 		AggregateID:   "ETH/USDT",
 		AggregateType: "OrderBook",
 	})
 
 	_ = store.WriteEvent(&model.PersistentEvent{
-		GlobalSeq:     3,
+		GlobalSeq:     start + 2,
 		EventType:     "TradeExecuted",
 		AggregateID:   "BTC/USDT",
 		AggregateType: "OrderBook",
@@ -128,8 +138,8 @@ func TestGetAggregateEvents(t *testing.T) {
 	events, err := store.GetAggregateEvents("OrderBook", "BTC/USDT")
 	assert.NoError(t, err)
 	assert.Len(t, events, 2)
-	assert.Equal(t, int64(1), events[0].GlobalSeq)
-	assert.Equal(t, int64(3), events[1].GlobalSeq)
+	assert.Equal(t, start, events[0].GlobalSeq)
+	assert.Equal(t, start+2, events[1].GlobalSeq)
 }
 
 // TestGetSymbolEvents 测试按符号查询事件
@@ -142,9 +152,10 @@ func TestGetSymbolEvents(t *testing.T) {
 	store := NewPostgresPersistentEventStore(db)
 
 	// 插入事件
+	start := nextTestGlobalSeq()
 	for i := int64(1); i <= 5; i++ {
 		_ = store.WriteEvent(&model.PersistentEvent{
-			GlobalSeq:      i,
+			GlobalSeq:      start + i - 1,
 			EventType:      "TradeExecuted",
 			AggregateID:    "BTC/USDT",
 			AggregateType:  "OrderBook",
@@ -153,12 +164,12 @@ func TestGetSymbolEvents(t *testing.T) {
 		})
 	}
 
-	// 查询序列号 2-4 的事件
-	events, err := store.GetSymbolEvents("BTC/USDT", 2, 4)
+	// 查询序列号 start+1 - start+3 的事件
+	events, err := store.GetSymbolEvents("BTC/USDT", start+1, start+3)
 	assert.NoError(t, err)
 	assert.Len(t, events, 3)
-	assert.Equal(t, int64(2), events[0].GlobalSeq)
-	assert.Equal(t, int64(4), events[2].GlobalSeq)
+	assert.Equal(t, start+1, events[0].GlobalSeq)
+	assert.Equal(t, start+3, events[2].GlobalSeq)
 }
 
 // TestGetGlobalEventStream 测试全局事件流查询
@@ -171,9 +182,10 @@ func TestGetGlobalEventStream(t *testing.T) {
 	store := NewPostgresPersistentEventStore(db)
 
 	// 插入 10 个事件
+	start := nextTestGlobalSeq()
 	for i := int64(1); i <= 10; i++ {
 		_ = store.WriteEvent(&model.PersistentEvent{
-			GlobalSeq:      i,
+			GlobalSeq:      start + i - 1,
 			EventType:      "TradeExecuted",
 			AggregateID:    "test",
 			AggregateType:  "OrderBook",
@@ -181,12 +193,12 @@ func TestGetGlobalEventStream(t *testing.T) {
 		})
 	}
 
-	// 从序列号 5 开始，获取 3 条事件
-	events, err := store.GetGlobalEventStream(5, 3)
+	// 从序列号 start+4 开始，获取 3 条事件
+	events, err := store.GetGlobalEventStream(start+4, 3)
 	assert.NoError(t, err)
 	assert.Len(t, events, 3)
-	assert.Equal(t, int64(5), events[0].GlobalSeq)
-	assert.Equal(t, int64(7), events[2].GlobalSeq)
+	assert.Equal(t, start+4, events[0].GlobalSeq)
+	assert.Equal(t, start+6, events[2].GlobalSeq)
 }
 
 // TestGetLatestGlobalSeq 测试获取最新序列号
@@ -203,12 +215,13 @@ func TestGetLatestGlobalSeq(t *testing.T) {
 	assert.Equal(t, int64(0), seq)
 
 	// 写入事件
+	seqVal := nextTestGlobalSeq()
 	_ = store.WriteEvent(&model.PersistentEvent{
-		GlobalSeq: 100,
+		GlobalSeq: seqVal,
 	})
 
 	seq, _ = store.GetLatestGlobalSeq()
-	assert.Equal(t, int64(100), seq)
+	assert.Equal(t, seqVal, seq)
 }
 
 // TestCountEvents 测试事件计数
@@ -221,9 +234,10 @@ func TestCountEvents(t *testing.T) {
 	store := NewPostgresPersistentEventStore(db)
 
 	// 插入 5 条事件
-	for i := 1; i <= 5; i++ {
+	start := nextTestGlobalSeq()
+	for i := 0; i < 5; i++ {
 		_ = store.WriteEvent(&model.PersistentEvent{
-			GlobalSeq:     int64(i),
+			GlobalSeq:     start + int64(i),
 			AggregateID:   "BTC/USDT",
 			AggregateType: "OrderBook",
 		})
@@ -244,18 +258,19 @@ func TestGetEventsByType(t *testing.T) {
 	store := NewPostgresPersistentEventStore(db)
 
 	// 插入不同类型的事件
+	start := nextTestGlobalSeq()
 	_ = store.WriteEvent(&model.PersistentEvent{
-		GlobalSeq: 1,
+		GlobalSeq: start,
 		EventType: "TradeExecuted",
 	})
 
 	_ = store.WriteEvent(&model.PersistentEvent{
-		GlobalSeq: 2,
+		GlobalSeq: start + 1,
 		EventType: "OrderCancelled",
 	})
 
 	_ = store.WriteEvent(&model.PersistentEvent{
-		GlobalSeq: 3,
+		GlobalSeq: start + 2,
 		EventType: "TradeExecuted",
 	})
 
@@ -275,18 +290,19 @@ func TestGetUnprocessedEvents(t *testing.T) {
 	store := NewPostgresPersistentEventStore(db)
 
 	// 插入 5 条事件
-	for i := int64(1); i <= 5; i++ {
+	start := nextTestGlobalSeq()
+	for i := int64(0); i < 5; i++ {
 		_ = store.WriteEvent(&model.PersistentEvent{
-			GlobalSeq: i,
+			GlobalSeq: start + i,
 		})
 	}
 
-	// 获取序列号 > 2 的事件
-	events, err := store.GetUnprocessedEvents(2, 10)
+	// 获取序列号 > start+1 的事件
+	events, err := store.GetUnprocessedEvents(start+1, 10)
 	assert.NoError(t, err)
 	assert.Len(t, events, 3)
-	assert.Equal(t, int64(3), events[0].GlobalSeq)
-	assert.Equal(t, int64(5), events[2].GlobalSeq)
+	assert.Equal(t, start+2, events[0].GlobalSeq)
+	assert.Equal(t, start+4, events[2].GlobalSeq)
 }
 
 // TestEventStoreReplay 测试事件重放（模拟恢复）
@@ -299,15 +315,16 @@ func TestEventStoreReplay(t *testing.T) {
 	store := NewPostgresPersistentEventStore(db)
 
 	// 模拟一系列交易事件
+	start := nextTestGlobalSeq()
 	trades := []struct {
 		seq      int64
 		symbol   string
 		price    int64
 		quantity float64
 	}{
-		{1, "BTC/USDT", 50000, 1.0},
-		{2, "BTC/USDT", 50100, 0.5},
-		{3, "BTC/USDT", 49900, 2.0},
+		{start, "BTC/USDT", 50000, 1.0},
+		{start + 1, "BTC/USDT", 50100, 0.5},
+		{start + 2, "BTC/USDT", 49900, 2.0},
 	}
 
 	for _, trade := range trades {
@@ -321,13 +338,13 @@ func TestEventStoreReplay(t *testing.T) {
 	}
 
 	// 模拟恢复：获取所有事件并重放
-	events, err := store.GetGlobalEventStream(1, 100)
+	events, err := store.GetGlobalEventStream(start, 100)
 	assert.NoError(t, err)
 	assert.Len(t, events, 3)
 
 	// 验证事件顺序
 	for i, event := range events {
-		assert.Equal(t, int64(i+1), event.GlobalSeq)
+		assert.Equal(t, start+int64(i), event.GlobalSeq)
 	}
 }
 
@@ -342,9 +359,11 @@ func TestEventStoreAtomicity(t *testing.T) {
 	store := NewPostgresPersistentEventStore(db)
 
 	// 创建会导致违反约束的事件（同一 global_seq）
+	// 这里故意使用相同的 global_seq 来验证批量写入的原子性和唯一约束
+	sameSeq := nextTestGlobalSeq()
 	events := []*model.PersistentEvent{
-		{GlobalSeq: 1, EventType: "Type1"},
-		{GlobalSeq: 1, EventType: "Type2"}, // 违反 UNIQUE 约束
+		{GlobalSeq: sameSeq, EventType: "Type1"},
+		{GlobalSeq: sameSeq, EventType: "Type2"}, // 违反 UNIQUE 约束
 	}
 
 	// 写入应该失败（并回滚）

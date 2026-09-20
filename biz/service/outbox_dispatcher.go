@@ -3,18 +3,27 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/cloudwego/hertz/pkg/common/hlog"
+	kafkadal "github.com/gogogo1024/cex-hertz-backend/biz/dal/kafka"
 	"github.com/gogogo1024/cex-hertz-backend/biz/dal/pg"
 	"github.com/gogogo1024/cex-hertz-backend/biz/model"
+	"github.com/gogogo1024/cex-hertz-backend/conf"
+	kafkago "github.com/segmentio/kafka-go"
 )
 
 // OutboxDispatcher 异步读取并发布 outbox 中的事件
 // 确保 outbox pattern 的可靠性
+type kafkaMessageSender interface {
+	WriteMessages(ctx context.Context, msgs ...kafkago.Message) error
+}
+
 type OutboxDispatcher struct {
 	outboxRepo    *pg.OutboxRepo
-	kafkaProducer interface{} // 真实实现中应该是 Kafka producer
+	kafkaProducer kafkaMessageSender
 	batchSize     int
 	maxRetries    int
 	ticker        *time.Ticker
@@ -28,12 +37,59 @@ func NewOutboxDispatcher(
 	batchSize int,
 	maxRetries int,
 ) *OutboxDispatcher {
-	return &OutboxDispatcher{
+	od := &OutboxDispatcher{
 		outboxRepo: outboxRepo,
 		batchSize:  batchSize,
 		maxRetries: maxRetries,
 		stopCh:     make(chan bool),
 	}
+	od.kafkaProducer = kafkadal.GetWriter(od.defaultTopic())
+	return od
+}
+
+func (od *OutboxDispatcher) SetKafkaProducer(writer kafkaMessageSender) {
+	od.kafkaProducer = writer
+}
+
+func (od *OutboxDispatcher) defaultTopic() string {
+	cfg := conf.GetConf()
+	if cfg == nil || len(cfg.Kafka.Topics) == 0 {
+		return "trade"
+	}
+	if topic, ok := cfg.Kafka.Topics["trade"]; ok {
+		return topic
+	}
+	for _, topic := range cfg.Kafka.Topics {
+		return topic
+	}
+	return "trade"
+}
+
+func (od *OutboxDispatcher) resolveTopic(entry *model.OutboxEntry) string {
+	if entry == nil {
+		return od.defaultTopic()
+	}
+	cfg := conf.GetConf()
+	if cfg != nil {
+		switch strings.ToLower(entry.EventType) {
+		case "tradeexecuted", "trade_executed":
+			if topic, ok := cfg.Kafka.Topics["trade"]; ok {
+				return topic
+			}
+		case "positionupdated", "position_updated":
+			if topic, ok := cfg.Kafka.Topics["order"]; ok {
+				return topic
+			}
+		}
+		if entry.AggregateType != "" {
+			for key, topic := range cfg.Kafka.Topics {
+				if strings.EqualFold(key, strings.ToLower(entry.AggregateType)) || strings.EqualFold(strings.ToLower(key), strings.ToLower(entry.AggregateType)) {
+					return topic
+				}
+			}
+		}
+	}
+	return od.defaultTopic()
 }
 
 // Start 启动 outbox dispatcher（异步）
@@ -130,26 +186,43 @@ func (od *OutboxDispatcher) publishEntry(ctx context.Context, entry *model.Outbo
 	}
 }
 
-// publishToKafka 发布到 Kafka（占位符，实际应集成 Kafka producer）
+// publishToKafka 发布到 Kafka，使用 event_id 作为消息 key，保证同一事件的幂等投递。
 func (od *OutboxDispatcher) publishToKafka(ctx context.Context, entry *model.OutboxEntry, payload interface{}) error {
-	// 实际实现中应该：
-	// 1. 使用 event_id 作为幂等键（Kafka ProducerConfig 设置 EnableIdempotence = true）
-	// 2. 根据 aggregate_id 选择分区（确保同一聚合根的事件有序）
-	// 3. 设置重试策略
-	//
-	// 示例：
-	// msg := &sarama.ProducerMessage{
-	//   Topic: "events-" + entry.AggregateType,
-	//   Key:   sarama.StringEncoder(entry.AggregateID),
-	//   Value: sarama.StringEncoder(entry.Payload),
-	// }
-	// _, _, err := od.kafkaProducer.SendMessage(msg)
+	if od.kafkaProducer == nil {
+		writer := kafkadal.GetWriter(od.resolveTopic(entry))
+		if writer == nil {
+			return fmt.Errorf("kafka producer not configured for topic %s", od.resolveTopic(entry))
+		}
+		od.kafkaProducer = writer
+	}
 
-	hlog.Debugf("[OutboxDispatcher] Publishing event %s to topic events-%s",
-		entry.EventID, entry.AggregateType)
+	msgBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal outbox payload for event %s: %w", entry.EventID, err)
+	}
 
-	// 模拟发布延迟
-	time.Sleep(10 * time.Millisecond)
+	topic := od.resolveTopic(entry)
+	msg := kafkago.Message{
+		Key:   []byte(entry.EventID),
+		Value: msgBytes,
+		Headers: []kafkago.Header{
+			{Key: "event_id", Value: []byte(entry.EventID)},
+			{Key: "aggregate_id", Value: []byte(entry.AggregateID)},
+			{Key: "aggregate_type", Value: []byte(entry.AggregateType)},
+		},
+	}
+
+	// kafka-go 不允许在 Writer 已指定 Topic 时，Message 再重复指定 Topic。
+	if writer, ok := od.kafkaProducer.(*kafkago.Writer); !ok || writer.Topic == "" {
+		msg.Topic = topic
+	}
+
+	hlog.Infof("[OutboxDispatcher] Publishing event %s to Kafka topic=%s key=%s",
+		entry.EventID, topic, entry.EventID)
+
+	if err := od.kafkaProducer.WriteMessages(ctx, msg); err != nil {
+		return fmt.Errorf("write message to kafka topic %s: %w", topic, err)
+	}
 
 	return nil
 }

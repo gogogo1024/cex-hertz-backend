@@ -126,8 +126,13 @@ func NewRecoveryExecutor(
 	matchEngine *PartitionAwareMatchEngine,
 	checkpointMgr *CheckpointManager,
 	eventLog model.EventStore,
-	lockMgr *RedisLockManager,
+	lockMgrs ...*RedisLockManager,
 ) *RecoveryExecutor {
+	var lockMgr *RedisLockManager
+	if len(lockMgrs) > 0 {
+		lockMgr = lockMgrs[0]
+	}
+
 	return &RecoveryExecutor{
 		matchEngine:      matchEngine,
 		checkpointMgr:    checkpointMgr,
