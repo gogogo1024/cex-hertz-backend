@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // EventContext 事件完整上下文
 // 携带：业务数据 + Transport Metadata + 处理链信息
@@ -43,12 +46,20 @@ func NewEventContext(
 	partition int32,
 	offset int64,
 ) *EventContext {
+	// 如果 event 为 nil，避免直接调用方法导致 panic
+	var ts int64
+	if event != nil {
+		ts = event.EventTimestamp()
+	} else {
+		ts = time.Now().UnixNano() / int64(time.Millisecond)
+	}
+
 	return &EventContext{
 		Event:       event,
 		Topic:       topic,
 		Partition:   partition,
 		Offset:      offset,
-		Timestamp:   event.EventTimestamp(),
+		Timestamp:   ts,
 		ProcessedAt: time.Now(),
 		// OwnershipEpoch 和 ProcessingNode 由调用者填充
 		OwnershipEpoch: 0, // 默认值，调用者应该更新
@@ -66,7 +77,13 @@ func (ec *EventContext) WithOwnershipEpoch(epoch int64, nodeID string) *EventCon
 
 // Key 返回事件的唯一标识（用于追踪和去重）
 func (ec *EventContext) Key() string {
-	return ec.Topic + ":" + ec.Event.Symbol() + ":" + string(rune(ec.Event.EventSeq()))
+	if ec == nil {
+		return ""
+	}
+	if ec.Event == nil {
+		return fmt.Sprintf("%s:%d:%d", ec.Topic, ec.Partition, ec.Offset)
+	}
+	return fmt.Sprintf("%s:%s:%d", ec.Topic, ec.Event.Symbol(), ec.Event.EventSeq())
 }
 
 // IsValid 检查上下文是否有效

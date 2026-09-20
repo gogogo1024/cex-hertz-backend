@@ -8,10 +8,23 @@ import (
 
 	"github.com/gogogo1024/cex-hertz-backend/biz/dal/pg"
 	"github.com/gogogo1024/cex-hertz-backend/biz/model"
+	kafkago "github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/assert"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+type mockKafkaMessageSender struct {
+	msgs []kafkago.Message
+	mu   sync.Mutex
+}
+
+func (m *mockKafkaMessageSender) WriteMessages(ctx context.Context, msgs ...kafkago.Message) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.msgs = append(m.msgs, msgs...)
+	return nil
+}
 
 // setupTestDB 创建用于测试的内存数据库
 func setupTestDB() (*gorm.DB, error) {
@@ -161,6 +174,8 @@ func TestOutboxDispatcherPublishSuccess(t *testing.T) {
 
 	outboxRepo := pg.NewOutboxRepo(db)
 	dispatcher := NewOutboxDispatcher(outboxRepo, 10, 3)
+	mockProducer := &mockKafkaMessageSender{}
+	dispatcher.SetKafkaProducer(mockProducer)
 
 	// 创建未发布的条目
 	entry := &model.OutboxEntry{
@@ -190,6 +205,8 @@ func TestOutboxDispatcherPublishSuccess(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, published.Published)
 	assert.NotNil(t, published.PublishedAt)
+	assert.Len(t, mockProducer.msgs, 1)
+	assert.Equal(t, "trade-pub-1", string(mockProducer.msgs[0].Key))
 }
 
 // TestOutboxPatternCaseA crash 在 checkpoint 前发生

@@ -49,6 +49,32 @@ func SubmitOrder(ctx context.Context, c *app.RequestContext) {
 	req.OrderID = fmt.Sprintf("%d", id)
 	req.Status = "active"
 	req.UpdatedAt = req.CreatedAt
+	// 如果全局撮合引擎存在，则将请求转发到撮合引擎（优先走引擎路径）
+	if service.GlobalMatchEngine != nil {
+		// 将内部表示转换为 SubmitOrderMsg（price/quantity 格式化为字符串）
+		priceStr := fmt.Sprintf("%.8f", float64(req.Price)/1e8)
+		qtyStr := fmt.Sprintf("%.8f", float64(req.Quantity)/1e8)
+		orderMsg := model.SubmitOrderMsg{
+			OrderID:  req.OrderID,
+			Symbol:   req.Symbol,
+			Side:     req.Side,
+			Price:    priceStr,
+			Quantity: qtyStr,
+			UserID:   req.UserID,
+		}
+		if err := service.GlobalMatchEngine.SubmitOrder(orderMsg); err != nil {
+			if err == service.ErrSymbolNotLocallyOwned {
+				c.JSON(consts.StatusConflict, map[string]interface{}{"error": "symbol not owned by this node"})
+				return
+			}
+			c.JSON(consts.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
+			return
+		}
+		c.JSON(consts.StatusOK, map[string]interface{}{"order_id": req.OrderID, "status": "submitted"})
+		return
+	}
+
+	// 回退到直接写入数据库的旧逻辑（当撮合引擎不可用或未注入时）
 	if err := service.CreateOrder(&req); err != nil {
 		c.JSON(consts.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
 		return

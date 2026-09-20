@@ -81,6 +81,9 @@ type OwnershipMetadata struct {
 	// 检查点信息
 	CheckpointSeq int64
 
+	// 转移记录 ID（当使用 TransferCoordinator 时会写入）
+	TransferID string
+
 	// Kafka offset 信息
 	KafkaOffset map[string]int64 // symbol -> offset
 
@@ -116,6 +119,9 @@ type OwnershipStateMachine struct {
 
 	// 迁移超时时间
 	migrationTimeout time.Duration
+
+	// 可选的迁移协调器（若为 nil 则表示未启用持久化/通知）
+	transferCoordinator TransferCoordinator
 }
 
 // OwnershipListener 监听所有权变化
@@ -140,6 +146,11 @@ func NewOwnershipStateMachine(partitionID, owner string, symbols []string) *Owne
 		actions:          make(map[StateTransition]func() error),
 		listeners:        make([]OwnershipListener, 0),
 		migrationTimeout: 30 * time.Second,
+	}
+
+	// 回退到全局默认 coordinator（若已通过 wiring 设置）以保持向后兼容
+	if tc := GetDefaultTransferCoordinator(); tc != nil {
+		fsm.transferCoordinator = tc
 	}
 
 	// 注册所有状态转移的 guards 和 actions
@@ -195,18 +206,51 @@ func (fsm *OwnershipStateMachine) registerTransitions() {
 	// Flushing -> Transferring: 所有者完成刷盘，等待目标确认
 	fsm.registerGuard(Flushing, Transferring, func() (bool, error) {
 		// 检查 checkpoint 是否已持久化
-		return true, nil
+		// 如果没有注入 coordinator，则回退到本地检查（CheckpointSeq ≤ LastProcessedSeq）以保持兼容性
+		if fsm.transferCoordinator == nil {
+			if fsm.metadata.CheckpointSeq <= fsm.metadata.LastProcessedSeq {
+				return true, nil
+			}
+			return false, fmt.Errorf("checkpoint not persisted")
+		}
+
+		// 当 coordinator 存在时，仍然以本地 checkpoint 作为最小条件；后续可扩展为 coordinator 提供更强保证
+		if fsm.metadata.CheckpointSeq <= fsm.metadata.LastProcessedSeq {
+			return true, nil
+		}
+		return false, fmt.Errorf("checkpoint not persisted")
 	})
 
 	fsm.registerAction(Flushing, Transferring, func() error {
 		// 发送所有权转移请求到目标节点
+		if fsm.transferCoordinator == nil {
+			return nil
+		}
+
+		transferID, err := fsm.transferCoordinator.InitiateTransfer(fsm.metadata.PartitionID, fsm.metadata.CurrentOwner, fsm.metadata.TargetOwner, fsm.metadata.CheckpointSeq)
+		if err != nil {
+			return fmt.Errorf("InitiateTransfer failed: %w", err)
+		}
+		fsm.metadata.TransferID = transferID
 		return nil
 	})
 
 	// Transferring -> Standby: 目标节点已就绪，转移完成
 	fsm.registerGuard(Transferring, Standby, func() (bool, error) {
 		// 检查目标节点是否已启动
-		return true, nil
+		if fsm.transferCoordinator == nil {
+			return true, nil
+		}
+
+		if fsm.metadata.TransferID == "" {
+			return false, fmt.Errorf("no transfer record")
+		}
+
+		ready, err := fsm.transferCoordinator.IsTargetReady(fsm.metadata.TransferID)
+		if err != nil {
+			return false, err
+		}
+		return ready, nil
 	})
 
 	fsm.registerAction(Transferring, Standby, func() error {
@@ -471,6 +515,13 @@ func (fsm *OwnershipStateMachine) SetMigrationTimeout(timeout time.Duration) {
 	fsm.mu.Lock()
 	defer fsm.mu.Unlock()
 	fsm.migrationTimeout = timeout
+}
+
+// SetTransferCoordinator 注入迁移协调器实例到当前 FSM
+func (fsm *OwnershipStateMachine) SetTransferCoordinator(tc TransferCoordinator) {
+	fsm.mu.Lock()
+	defer fsm.mu.Unlock()
+	fsm.transferCoordinator = tc
 }
 
 // GetTransitionHistory 获取状态转移历史

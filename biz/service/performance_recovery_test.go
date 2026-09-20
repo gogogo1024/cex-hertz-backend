@@ -20,6 +20,7 @@ func TestEventStoreConcurrentWrites(t *testing.T) {
 
 	db, _ := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	db.AutoMigrate(&model.PersistentEvent{})
+	sequencer := NewSequencer()
 
 	const (
 		numBatches     = 5
@@ -32,7 +33,7 @@ func TestEventStoreConcurrentWrites(t *testing.T) {
 	// 生成所有事件
 	for i := 0; i < totalEvents; i++ {
 		events = append(events, &model.PersistentEvent{
-			GlobalSeq:      int64(i + 1),
+			GlobalSeq:      int64(sequencer.NextGlobalSeq()),
 			EventType:      "test_event",
 			AggregateType:  "Test",
 			AggregateID:    fmt.Sprintf("AGG-%d", i%numBatches),
@@ -74,12 +75,13 @@ func TestEventStoreQueryPerformance(t *testing.T) {
 
 	db, _ := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	db.AutoMigrate(&model.PersistentEvent{})
+	sequencer := NewSequencer()
 
 	// 预填充数据
 	const numEvents = 5000
 	for i := 0; i < numEvents; i++ {
 		event := &model.PersistentEvent{
-			GlobalSeq:      int64(i + 1),
+			GlobalSeq:      int64(sequencer.NextGlobalSeq()),
 			EventType:      "test_event",
 			AggregateType:  "Test",
 			Symbol:         "BTC/USDT",
@@ -139,6 +141,7 @@ func TestRecoveryPerformance(t *testing.T) {
 
 	db, _ := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	db.AutoMigrate(&model.PersistentEvent{})
+	sequencer := NewSequencer()
 
 	// 模拟已有大量数据
 	const numExistingEvents = 50000
@@ -146,7 +149,7 @@ func TestRecoveryPerformance(t *testing.T) {
 
 	for i := 0; i < numExistingEvents; i++ {
 		event := &model.PersistentEvent{
-			GlobalSeq:      int64(i + 1),
+			GlobalSeq:      int64(sequencer.NextGlobalSeq()),
 			EventType:      "test_event",
 			AggregateType:  "Test",
 			Symbol:         "BTC/USDT",
@@ -182,12 +185,13 @@ func TestRecoveryPerformance(t *testing.T) {
 func TestCrashRecoveryScenarioA(t *testing.T) {
 	db, _ := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	db.AutoMigrate(&model.PersistentEvent{})
+	sequencer := NewSequencer()
 
 	// 写入一些事件
 	const numEvents = 1000
 	for i := 0; i < numEvents; i++ {
 		event := &model.PersistentEvent{
-			GlobalSeq:      int64(i + 1),
+			GlobalSeq:      int64(sequencer.NextGlobalSeq()),
 			EventType:      "test_event",
 			AggregateType:  "Test",
 			Symbol:         "BTC/USDT",
@@ -221,13 +225,14 @@ func TestCrashRecoveryScenarioA(t *testing.T) {
 func TestDataConsistencyAfterRecovery(t *testing.T) {
 	db, _ := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	db.AutoMigrate(&model.PersistentEvent{})
+	sequencer := NewSequencer()
 
 	const numEvents = 5000
 
 	// 写入事件
 	for i := 0; i < numEvents; i++ {
 		event := &model.PersistentEvent{
-			GlobalSeq:      int64(i + 1),
+			GlobalSeq:      int64(sequencer.NextGlobalSeq()),
 			EventType:      "test_event",
 			AggregateType:  "Test",
 			AggregateID:    fmt.Sprintf("ORDER-%d", i%100),
@@ -271,6 +276,7 @@ func TestConcurrentRecoveryProcesses(t *testing.T) {
 
 	db, _ := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	db.AutoMigrate(&model.PersistentEvent{})
+	sequencer := NewSequencer()
 
 	const (
 		numRecoveryWorkers = 4
@@ -281,7 +287,7 @@ func TestConcurrentRecoveryProcesses(t *testing.T) {
 	totalEvents := numRecoveryWorkers * eventsPerWorker
 	for i := 0; i < totalEvents; i++ {
 		event := &model.PersistentEvent{
-			GlobalSeq:      int64(i + 1),
+			GlobalSeq:      int64(sequencer.NextGlobalSeq()),
 			EventType:      "test_event",
 			AggregateType:  "Test",
 			Symbol:         "BTC/USDT",
@@ -327,13 +333,14 @@ func TestEventOrderingInvariant(t *testing.T) {
 
 	db, _ := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	db.AutoMigrate(&model.PersistentEvent{})
+	sequencer := NewSequencer()
 
 	const numEvents = 10000
 
 	// 写入事件
 	for i := 0; i < numEvents; i++ {
 		event := &model.PersistentEvent{
-			GlobalSeq:      int64(i + 1),
+			GlobalSeq:      int64(sequencer.NextGlobalSeq()),
 			EventType:      "test_event",
 			AggregateType:  "Test",
 			Symbol:         "BTC/USDT",

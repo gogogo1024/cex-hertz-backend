@@ -6,6 +6,7 @@ import (
 
 	"github.com/gogogo1024/cex-hertz-backend/biz/model"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // OutboxRepo 出站队列存储库
@@ -22,6 +23,19 @@ func NewOutboxRepo(db *gorm.DB) *OutboxRepo {
 // 用法：在 DB 事务内调用
 func (r *OutboxRepo) WriteOutboxEntry(tx *gorm.DB, entry *model.OutboxEntry) error {
 	return tx.Create(entry).Error
+}
+
+// WriteOutboxEntryIfNotExists 尝试插入 outbox 条目，若已存在则不报错并返回 inserted=false
+// 在事务内使用 ON CONFLICT DO NOTHING 来实现原子的幂等预留。
+func (r *OutboxRepo) WriteOutboxEntryIfNotExists(tx *gorm.DB, entry *model.OutboxEntry) (bool, error) {
+	res := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(entry)
+	if res.Error != nil {
+		return false, res.Error
+	}
+	if res.RowsAffected == 0 {
+		return false, nil
+	}
+	return true, nil
 }
 
 // GetUnpublished 获取未发布的 outbox 条目（分批）
