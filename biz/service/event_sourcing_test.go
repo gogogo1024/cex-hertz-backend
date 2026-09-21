@@ -8,6 +8,7 @@ import (
 	"github.com/gogogo1024/cex-hertz-backend/biz/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 // TestIntegerArithmetic 验证整数算术的正确性
@@ -212,7 +213,15 @@ func TestPositionProcessor_Idempotency(t *testing.T) {
 		return nil
 	}
 
-	processor := NewPositionProcessor(buyFn, sellFn)
+	// wrap into tx-aware signatures expected by NewPositionProcessor
+	buyFnTx := func(tx *gorm.DB, userID, symbol, qty, price string) error {
+		return buyFn(userID, symbol, qty, price)
+	}
+	sellFnTx := func(tx *gorm.DB, userID, symbol, qty string) error {
+		return sellFn(userID, symbol, qty)
+	}
+
+	processor := NewPositionProcessor(buyFnTx, sellFnTx)
 
 	// 创建成交事件
 	trade := &model.TradeExecutedEvent{

@@ -30,8 +30,20 @@ func GetUserPositionBySymbol(userID, symbol string) (*model.Position, error) {
 
 // 买入持仓（加权均价）
 func BuyPosition(userID, symbol, buyQty, buyPrice string) error {
+	// 兼容旧接口：调用基于全局 DB 的事务版实现
+	return BuyPositionTx(pg.GormDB, userID, symbol, buyQty, buyPrice)
+}
+
+// 卖出持仓
+func SellPosition(userID, symbol, sellQty string) error {
+	// 兼容旧接口：调用基于全局 DB 的事务版实现
+	return SellPositionTx(pg.GormDB, userID, symbol, sellQty)
+}
+
+// BuyPositionTx 在给定事务/DB 对象上执行持仓买入逻辑（便于在事务中调用）
+func BuyPositionTx(tx *gorm.DB, userID, symbol, buyQty, buyPrice string) error {
 	var pos model.Position
-	err := pg.GormDB.Where("user_id = ? AND symbol = ?", userID, symbol).First(&pos).Error
+	err := tx.Where("user_id = ? AND symbol = ?", userID, symbol).First(&pos).Error
 	buyQtyF, _ := strconv.ParseFloat(buyQty, 64)
 	buyPriceF, _ := strconv.ParseFloat(buyPrice, 64)
 	switch err {
@@ -43,7 +55,7 @@ func BuyPosition(userID, symbol, buyQty, buyPrice string) error {
 			Volume:   buyQty,
 			AvgPrice: buyPrice,
 		}
-		return pg.GormDB.Create(&pos).Error
+		return tx.Create(&pos).Error
 	case nil:
 		// 加权均价
 		oldQty, _ := strconv.ParseFloat(pos.Volume, 64)
@@ -52,15 +64,15 @@ func BuyPosition(userID, symbol, buyQty, buyPrice string) error {
 		newAvg := (oldQty*oldAvg + buyQtyF*buyPriceF) / newQty
 		pos.Volume = strconv.FormatFloat(newQty, 'f', -1, 64)
 		pos.AvgPrice = strconv.FormatFloat(newAvg, 'f', -1, 64)
-		return pg.GormDB.Save(&pos).Error
+		return tx.Save(&pos).Error
 	}
 	return err
 }
 
-// 卖出持仓
-func SellPosition(userID, symbol, sellQty string) error {
+// SellPositionTx 在给定事务/DB 对象上执行持仓卖出逻辑（便于在事务中调用）
+func SellPositionTx(tx *gorm.DB, userID, symbol, sellQty string) error {
 	var pos model.Position
-	err := pg.GormDB.Where("user_id = ? AND symbol = ?", userID, symbol).First(&pos).Error
+	err := tx.Where("user_id = ? AND symbol = ?", userID, symbol).First(&pos).Error
 	sellQtyF, _ := strconv.ParseFloat(sellQty, 64)
 	if err != nil {
 		return err
@@ -75,5 +87,5 @@ func SellPosition(userID, symbol, sellQty string) error {
 	if newQty == 0 {
 		pos.AvgPrice = "0"
 	}
-	return pg.GormDB.Save(&pos).Error
+	return tx.Save(&pos).Error
 }

@@ -67,7 +67,15 @@ func TestOutboxPatternAtomicity(t *testing.T) {
 		return nil
 	}
 
-	processor := NewPositionProcessorWithOutbox(db, outboxRepo, buyPositionFn, sellPositionFn)
+	// tx-aware wrappers for compatibility with NewPositionProcessorWithOutbox
+	buyPositionFnTx := func(tx *gorm.DB, userID, symbol, quantity, price string) error {
+		return buyPositionFn(userID, symbol, quantity, price)
+	}
+	sellPositionFnTx := func(tx *gorm.DB, userID, symbol, quantity string) error {
+		return sellPositionFn(userID, symbol, quantity)
+	}
+
+	processor := NewPositionProcessorWithOutbox(db, outboxRepo, buyPositionFnTx, sellPositionFnTx)
 
 	// 创建成交事件
 	tradeEvent := &model.TradeExecutedEvent{
@@ -128,7 +136,14 @@ func TestOutboxPatternIdempotency(t *testing.T) {
 		return nil
 	}
 
-	processor := NewPositionProcessorWithOutbox(db, outboxRepo, buyPositionFn, sellPositionFn)
+	buyPositionFnTx := func(tx *gorm.DB, userID, symbol, quantity, price string) error {
+		return buyPositionFn(userID, symbol, quantity, price)
+	}
+	sellPositionFnTx := func(tx *gorm.DB, userID, symbol, quantity string) error {
+		return sellPositionFn(userID, symbol, quantity)
+	}
+
+	processor := NewPositionProcessorWithOutbox(db, outboxRepo, buyPositionFnTx, sellPositionFnTx)
 
 	tradeEvent := &model.TradeExecutedEvent{
 		Seq:          1,
@@ -248,7 +263,14 @@ func TestOutboxPatternCaseA(t *testing.T) {
 		return nil
 	}
 
-	processor := NewPositionProcessorWithOutbox(db, outboxRepo, buyPositionFn, sellPositionFn)
+	buyPositionFnTx := func(tx *gorm.DB, userID, symbol, quantity, price string) error {
+		return buyPositionFn(userID, symbol, quantity, price)
+	}
+	sellPositionFnTx := func(tx *gorm.DB, userID, symbol, quantity string) error {
+		return sellPositionFn(userID, symbol, quantity)
+	}
+
+	processor := NewPositionProcessorWithOutbox(db, outboxRepo, buyPositionFnTx, sellPositionFnTx)
 
 	tradeEvent := &model.TradeExecutedEvent{
 		TradeID:   "trade-casea-1",
@@ -318,9 +340,14 @@ func TestOutboxPatternCaseB_Monitoring(t *testing.T) {
 		return nil // 幂等处理阻止重复
 	}
 
-	processor := NewPositionProcessorWithOutbox(db, outboxRepo, buyPositionFn, func(_, _, _ string) error {
+	buyPositionFnTx := func(tx *gorm.DB, userID, symbol, quantity, price string) error {
+		return buyPositionFn(userID, symbol, quantity, price)
+	}
+	sellPositionFnTx := func(tx *gorm.DB, userID, symbol, quantity string) error {
 		return nil
-	})
+	}
+
+	processor := NewPositionProcessorWithOutbox(db, outboxRepo, buyPositionFnTx, sellPositionFnTx)
 
 	// 创建一个手动模拟的 checkpoint（在实际应用中由 event pipeline 管理）
 	checkpointSeq := int64(100)

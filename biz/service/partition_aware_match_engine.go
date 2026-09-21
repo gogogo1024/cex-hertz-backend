@@ -94,7 +94,7 @@ func NewPartitionAwareMatchEngine(
 	// 3. 注册所有处理器
 	eventPipeline.RegisterProcessor(NewDatabaseProcessor(nil, 1000))
 	// 使用带 outbox 支持的 PositionProcessor，将持仓变更与 outbox 写入放在同一事务中
-	eventPipeline.RegisterProcessor(NewPositionProcessorWithOutbox(pg.GormDB, pg.NewOutboxRepo(pg.GormDB), BuyPosition, SellPosition))
+	eventPipeline.RegisterProcessor(NewPositionProcessorWithOutbox(pg.GormDB, pg.NewOutboxRepo(pg.GormDB), BuyPositionTx, SellPositionTx))
 	eventPipeline.RegisterProcessor(NewWebSocketProcessor(broadcaster, unicaster))
 
 	// 4. 创建基础的 MatchEngine

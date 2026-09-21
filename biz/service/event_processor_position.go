@@ -27,8 +27,9 @@ type PositionProcessor struct {
 	processedTrades map[string]bool // trade_id -> 已处理
 
 	// 实际的持仓更新函数（由外部提供）
-	buyPositionFn  func(userID, symbol, quantity, price string) error
-	sellPositionFn func(userID, symbol, quantity string) error
+	// 现在支持事务化版本：tx-aware 函数签名
+	buyPositionFn  func(tx *gorm.DB, userID, symbol, quantity, price string) error
+	sellPositionFn func(tx *gorm.DB, userID, symbol, quantity string) error
 
 	// 数据库与 outbox 仓库（用于事务化写入）
 	db         *gorm.DB
@@ -37,8 +38,8 @@ type PositionProcessor struct {
 
 // NewPositionProcessor 创建一个新的持仓处理器
 func NewPositionProcessor(
-	buyPositionFn func(userID, symbol, quantity, price string) error,
-	sellPositionFn func(userID, symbol, quantity string) error,
+	buyPositionFn func(tx *gorm.DB, userID, symbol, quantity, price string) error,
+	sellPositionFn func(tx *gorm.DB, userID, symbol, quantity string) error,
 ) *PositionProcessor {
 	return &PositionProcessor{
 		processedTrades: make(map[string]bool),
@@ -52,8 +53,8 @@ func NewPositionProcessor(
 func NewPositionProcessorWithOutbox(
 	db *gorm.DB,
 	outboxRepo *pg.OutboxRepo,
-	buyPositionFn func(userID, symbol, quantity, price string) error,
-	sellPositionFn func(userID, symbol, quantity string) error,
+	buyPositionFn func(tx *gorm.DB, userID, symbol, quantity, price string) error,
+	sellPositionFn func(tx *gorm.DB, userID, symbol, quantity string) error,
 ) *PositionProcessor {
 	return &PositionProcessor{
 		processedTrades: make(map[string]bool),
@@ -108,25 +109,25 @@ func (pp *PositionProcessor) handleTradeExecuted(e *model.TradeExecutedEvent) er
 	// 如果 taker 是买方，则 taker 买入，maker 卖出
 	if e.TakerSide == "buy" {
 		// Taker 买入
-		if err := pp.buyPositionFn(e.TakerUser, e.Symbol(), quantityStr, priceStr); err != nil {
+		if err := pp.buyPositionFn(nil, e.TakerUser, e.Symbol(), quantityStr, priceStr); err != nil {
 			hlog.Errorf("[PositionProcessor] Failed to update taker buy position: %v", err)
 			return err
 		}
 
 		// Maker 卖出
-		if err := pp.sellPositionFn(e.MakerUser, e.Symbol(), quantityStr); err != nil {
+		if err := pp.sellPositionFn(nil, e.MakerUser, e.Symbol(), quantityStr); err != nil {
 			hlog.Errorf("[PositionProcessor] Failed to update maker sell position: %v", err)
 			return err
 		}
 	} else {
 		// Taker 卖出
-		if err := pp.sellPositionFn(e.TakerUser, e.Symbol(), quantityStr); err != nil {
+		if err := pp.sellPositionFn(nil, e.TakerUser, e.Symbol(), quantityStr); err != nil {
 			hlog.Errorf("[PositionProcessor] Failed to update taker sell position: %v", err)
 			return err
 		}
 
 		// Maker 买入
-		if err := pp.buyPositionFn(e.MakerUser, e.Symbol(), quantityStr, priceStr); err != nil {
+		if err := pp.buyPositionFn(nil, e.MakerUser, e.Symbol(), quantityStr, priceStr); err != nil {
 			hlog.Errorf("[PositionProcessor] Failed to update maker buy position: %v", err)
 			return err
 		}
@@ -193,20 +194,20 @@ func (pp *PositionProcessor) handleTradeExecutedTransactional(e *model.TradeExec
 		priceStr := fmt.Sprintf("%.8f", float64(e.Price)/1e8)
 
 		if e.TakerSide == "buy" {
-			if err := pp.buyPositionFn(e.TakerUser, e.Symbol(), quantityStr, priceStr); err != nil {
+			if err := pp.buyPositionFn(tx, e.TakerUser, e.Symbol(), quantityStr, priceStr); err != nil {
 				hlog.Errorf("[PositionProcessor] Failed to update taker buy position: %v", err)
 				return err
 			}
-			if err := pp.sellPositionFn(e.MakerUser, e.Symbol(), quantityStr); err != nil {
+			if err := pp.sellPositionFn(tx, e.MakerUser, e.Symbol(), quantityStr); err != nil {
 				hlog.Errorf("[PositionProcessor] Failed to update maker sell position: %v", err)
 				return err
 			}
 		} else {
-			if err := pp.sellPositionFn(e.TakerUser, e.Symbol(), quantityStr); err != nil {
+			if err := pp.sellPositionFn(tx, e.TakerUser, e.Symbol(), quantityStr); err != nil {
 				hlog.Errorf("[PositionProcessor] Failed to update taker sell position: %v", err)
 				return err
 			}
-			if err := pp.buyPositionFn(e.MakerUser, e.Symbol(), quantityStr, priceStr); err != nil {
+			if err := pp.buyPositionFn(tx, e.MakerUser, e.Symbol(), quantityStr, priceStr); err != nil {
 				hlog.Errorf("[PositionProcessor] Failed to update maker buy position: %v", err)
 				return err
 			}
