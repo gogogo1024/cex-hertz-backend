@@ -30,7 +30,6 @@ func TestWriteOutboxEntryIfNotExists_Concurrent_Postgres(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(N)
 
-	var successCount int32
 	for i := 0; i < N; i++ {
 		go func() {
 			defer wg.Done()
