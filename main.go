@@ -40,6 +40,14 @@ func main() {
 	cfg := conf.GetConf()
 	dal.Init()
 	defer kafka.CloseAllWriters() // Event Sourcing V2: 关闭Kafka Writers
+	// 注意: `kafkadal.InitWriters()` 会预先为配置中的所有 topic 创建并缓存 `kafka.Writer` 实例，
+	// 这在生产环境的“预热”阶段有用（可以在部署或服务启动前建立 TCP 连接以减少首次写入延迟），
+	// 但在测试环境或当我们希望按需延迟创建 per-topic writer 时不应自动调用。
+	// 因此我们不在这里自动调用 InitWriters()。如果需要在生产中预热，请在部署脚本或启动选项中显式调用：
+	//
+	//    kafkadal.InitWriters()
+	//
+	// 例如：在容器启动脚本中，先加载配置并调用 InitWriters()，然后再启动主进程。
 	consulClient := initConsul(cfg)
 	h := initHertzServer(cfg, consulClient)
 	wsServer, pm, localAddr, matchEngine := initBusiness(cfg, h)
