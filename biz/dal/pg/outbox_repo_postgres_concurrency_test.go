@@ -5,6 +5,7 @@ package pg
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/gogogo1024/cex-hertz-backend/biz/model"
@@ -29,6 +30,8 @@ func TestWriteOutboxEntryIfNotExists_Concurrent_Postgres(t *testing.T) {
 	const N = 8
 	var wg sync.WaitGroup
 	wg.Add(N)
+	// 原子计数器记录实际有多少个 goroutine 返回 inserted=true
+	var successCount int32
 
 	for i := 0; i < N; i++ {
 		go func() {
@@ -47,18 +50,24 @@ func TestWriteOutboxEntryIfNotExists_Concurrent_Postgres(t *testing.T) {
 				return
 			}
 			if inserted {
-				_ = tx.Commit().Error
-			} else {
-				_ = tx.Commit().Error
+				atomic.AddInt32(&successCount, 1)
 			}
+			// 无论 inserted 与否，都提交事务（插入已由 ON CONFLICT 控制）
+			_ = tx.Commit().Error
 		}()
 	}
 
 	wg.Wait()
 
-	// 验证数据库中只有一条对应的 outbox entry
-	var cnt int64
-	err = db.WithContext(context.Background()).Model(&model.OutboxEntry{}).Where("event_id = ?", eventID).Count(&cnt).Error
+	// 精确断言：恰有一次写入被视为 inserted
+	require.Equal(t, int32(1), atomic.LoadInt32(&successCount))
+
+	// 验证数据库中只有一条对应的 outbox entry，且字段符合预期
+	var saved model.OutboxEntry
+	err = db.WithContext(context.Background()).Where("event_id = ?", eventID).First(&saved).Error
 	require.NoError(t, err)
-	require.Equal(t, int64(1), cnt)
+	require.Equal(t, eventID, saved.EventID)
+	require.Equal(t, "TradeExecuted", saved.EventType)
+	require.Equal(t, "BTC/USDT", saved.AggregateID)
+	require.Equal(t, "OrderBook", saved.AggregateType)
 }
