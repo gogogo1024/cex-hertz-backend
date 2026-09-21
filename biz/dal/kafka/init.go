@@ -13,15 +13,25 @@ import (
 )
 
 var (
-	writers sync.Map // map[string]*kafka.Writer
+	// writers caches per-topic producers. Values implement MessageSender (commonly *kafka.Writer).
+	writers sync.Map // map[string]MessageSender
 )
 
+// MessageSender is a minimal writer interface used by application code to send messages.
+// It intentionally mirrors `kafka.Writer`'s `WriteMessages` to allow using real writers
+// or test doubles in the cache.
+type MessageSender interface {
+	WriteMessages(ctx context.Context, msgs ...kafka.Message) error
+}
+
 // GetWriter 获取指定 topic 的 kafka.Writer，自动复用
-func GetWriter(topic string) *kafka.Writer {
-	val, ok := writers.Load(topic)
-	if ok {
-		return val.(*kafka.Writer)
+func GetWriter(topic string) MessageSender {
+	if val, ok := writers.Load(topic); ok {
+		if ms, ok := val.(MessageSender); ok {
+			return ms
+		}
 	}
+
 	kafkaConf := conf.GetConf().Kafka
 	brokers := normalizeBrokers(kafkaConf.Brokers)
 	if len(brokers) == 0 {

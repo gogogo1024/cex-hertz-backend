@@ -17,9 +17,9 @@ import (
 
 // OutboxDispatcher 异步读取并发布 outbox 中的事件
 // 确保 outbox pattern 的可靠性
-type kafkaMessageSender interface {
-	WriteMessages(ctx context.Context, msgs ...kafkago.Message) error
-}
+// 使用 kafkadal.MessageSender 作为通用发送者接口
+// 保留本文件内部使用的别名以减少变更范围
+type kafkaMessageSender = kafkadal.MessageSender
 
 type OutboxDispatcher struct {
 	outboxRepo    *pg.OutboxRepo
@@ -43,7 +43,6 @@ func NewOutboxDispatcher(
 		maxRetries: maxRetries,
 		stopCh:     make(chan bool),
 	}
-	od.kafkaProducer = kafkadal.GetWriter(od.defaultTopic())
 	return od
 }
 
@@ -188,12 +187,27 @@ func (od *OutboxDispatcher) publishEntry(ctx context.Context, entry *model.Outbo
 
 // publishToKafka 发布到 Kafka，使用 event_id 作为消息 key，保证同一事件的幂等投递。
 func (od *OutboxDispatcher) publishToKafka(ctx context.Context, entry *model.OutboxEntry, payload interface{}) error {
-	if od.kafkaProducer == nil {
-		writer := kafkadal.GetWriter(od.resolveTopic(entry))
-		if writer == nil {
-			return fmt.Errorf("kafka producer not configured for topic %s", od.resolveTopic(entry))
+	topic := od.resolveTopic(entry)
+
+	// Select producer:
+	// - If a custom producer was injected via SetKafkaProducer and it is NOT a *kafkago.Writer,
+	//   use it for all topics (tests inject mocks this way).
+	// - Otherwise, use per-topic writers from kafkadal.GetWriter(topic).
+	var producer kafkaMessageSender
+	if od.kafkaProducer != nil {
+		if _, isWriter := od.kafkaProducer.(*kafkago.Writer); isWriter {
+			// prefer per-topic writer even if kafkaProducer holds a default writer
+			producer = kafkadal.GetWriter(topic)
+		} else {
+			// custom producer (mock) — use it for all topics
+			producer = od.kafkaProducer
 		}
-		od.kafkaProducer = writer
+	} else {
+		producer = kafkadal.GetWriter(topic)
+	}
+
+	if producer == nil {
+		return fmt.Errorf("kafka producer not configured for topic %s", topic)
 	}
 
 	msgBytes, err := json.Marshal(payload)
@@ -201,7 +215,6 @@ func (od *OutboxDispatcher) publishToKafka(ctx context.Context, entry *model.Out
 		return fmt.Errorf("marshal outbox payload for event %s: %w", entry.EventID, err)
 	}
 
-	topic := od.resolveTopic(entry)
 	msg := kafkago.Message{
 		Key:   []byte(entry.EventID),
 		Value: msgBytes,
@@ -212,15 +225,17 @@ func (od *OutboxDispatcher) publishToKafka(ctx context.Context, entry *model.Out
 		},
 	}
 
-	// kafka-go 不允许在 Writer 已指定 Topic 时，Message 再重复指定 Topic。
-	if writer, ok := od.kafkaProducer.(*kafkago.Writer); !ok || writer.Topic == "" {
+	// If underlying producer is not a kafka.Writer or the writer has no Topic set,
+	// we set the message Topic explicitly. kafkago.Writer will ignore Message.Topic
+	// when its own Topic is set.
+	if w, ok := producer.(*kafkago.Writer); !ok || w.Topic == "" {
 		msg.Topic = topic
 	}
 
 	hlog.Infof("[OutboxDispatcher] Publishing event %s to Kafka topic=%s key=%s",
 		entry.EventID, topic, entry.EventID)
 
-	if err := od.kafkaProducer.WriteMessages(ctx, msg); err != nil {
+	if err := producer.WriteMessages(ctx, msg); err != nil {
 		return fmt.Errorf("write message to kafka topic %s: %w", topic, err)
 	}
 
