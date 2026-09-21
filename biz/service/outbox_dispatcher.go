@@ -17,9 +17,9 @@ import (
 
 // OutboxDispatcher 异步读取并发布 outbox 中的事件
 // 确保 outbox pattern 的可靠性
-type kafkaMessageSender interface {
-	WriteMessages(ctx context.Context, msgs ...kafkago.Message) error
-}
+// 使用 kafkadal.MessageSender 作为通用发送者接口
+// 保留本文件内部使用的别名以减少变更范围
+type kafkaMessageSender = kafkadal.MessageSender
 
 type OutboxDispatcher struct {
 	outboxRepo    *pg.OutboxRepo
