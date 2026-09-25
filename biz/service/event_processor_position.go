@@ -25,7 +25,9 @@ type PositionProcessor struct {
 	// processedTrades 存储已处理的 trade_id，防止重复处理
 	// 使用独立的 mutex 保护 map 访问；并使用按 symbol 的锁以提高并发性
 	processedMu     sync.Mutex
-	processedTrades map[string]bool // trade_id -> 已处理
+	processedTrades map[string]bool // trade_id -> 已处理 (fallback when DB dedup unavailable)
+	// optional DB-based dedup repo (when constructed with outbox/db)
+	processedRepo *pg.ProcessedRepo
 
 	// 按 symbol 的锁集合：key=symbol -> *sync.Mutex
 	locks sync.Map // map[string]*sync.Mutex
@@ -60,13 +62,18 @@ func NewPositionProcessorWithOutbox(
 	buyPositionFn func(tx *gorm.DB, userID, symbol, quantity, price string) error,
 	sellPositionFn func(tx *gorm.DB, userID, symbol, quantity string) error,
 ) *PositionProcessor {
-	return &PositionProcessor{
+	proc := &PositionProcessor{
 		processedTrades: make(map[string]bool),
 		buyPositionFn:   buyPositionFn,
 		sellPositionFn:  sellPositionFn,
 		db:              db,
 		outboxRepo:      outboxRepo,
 	}
+	// 初始化 DB 层的去重仓库，用于替代进程内缓存的幂等判断
+	if db != nil {
+		proc.processedRepo = pg.NewProcessedRepo(db)
+	}
+	return proc
 }
 
 // ProcessEvent 处理一个事件
@@ -102,7 +109,54 @@ func (pp *PositionProcessor) handleTradeExecuted(e *model.TradeExecutedEvent) er
 	l.Lock()
 	defer l.Unlock()
 
-	// 检查幂等性：是否已经处理过这个 trade
+	// 优先使用 DB 去重（如果可用），否则使用内存缓存作为回退
+	if pp.processedRepo != nil {
+		inserted, perr := pp.processedRepo.WriteIfNotExists(e.TradeID)
+		if perr != nil {
+			hlog.Errorf("[PositionProcessor] ProcessedRepo error: %v", perr)
+			return perr
+		}
+		if !inserted {
+			hlog.Infof("[PositionProcessor] Skipping duplicate trade (DB): %s", e.TradeID)
+			return nil
+		}
+		// 如果后续更新失败，需要删除已插入的去重标记以便重试
+		insertedFlag := true
+		// 执行更新逻辑，若失败则 cleanup
+		quantityStr := fmt.Sprintf("%.8f", float64(e.Quantity)/1e8)
+		priceStr := fmt.Sprintf("%.8f", float64(e.Price)/1e8)
+
+		var opErr error
+		if e.TakerSide == "buy" {
+			if err := pp.buyPositionFn(nil, e.TakerUser, e.Symbol(), quantityStr, priceStr); err != nil {
+				hlog.Errorf("[PositionProcessor] Failed to update taker buy position: %v", err)
+				opErr = err
+			} else if err := pp.sellPositionFn(nil, e.MakerUser, e.Symbol(), quantityStr); err != nil {
+				hlog.Errorf("[PositionProcessor] Failed to update maker sell position: %v", err)
+				opErr = err
+			}
+		} else {
+			if err := pp.sellPositionFn(nil, e.TakerUser, e.Symbol(), quantityStr); err != nil {
+				hlog.Errorf("[PositionProcessor] Failed to update taker sell position: %v", err)
+				opErr = err
+			} else if err := pp.buyPositionFn(nil, e.MakerUser, e.Symbol(), quantityStr, priceStr); err != nil {
+				hlog.Errorf("[PositionProcessor] Failed to update maker buy position: %v", err)
+				opErr = err
+			}
+		}
+		if opErr != nil {
+			if insertedFlag {
+				_ = pp.processedRepo.Delete(e.TradeID)
+			}
+			return opErr
+		}
+
+		hlog.Infof("[PositionProcessor] Updated position for trade: %s (taker: %s, maker: %s)",
+			e.TradeID, e.TakerUser, e.MakerUser)
+		return nil
+	}
+
+	// 回退：使用内存缓存判断幂等性（仅在没有 DB 去重时使用）
 	pp.processedMu.Lock()
 	if pp.processedTrades[e.TradeID] {
 		pp.processedMu.Unlock()
@@ -170,14 +224,7 @@ func (pp *PositionProcessor) handleTradeExecutedTransactional(e *model.TradeExec
 	l.Lock()
 	defer l.Unlock()
 
-	// 检查幂等性：是否已经处理过这个 trade
-	pp.processedMu.Lock()
-	if pp.processedTrades[e.TradeID] {
-		pp.processedMu.Unlock()
-		hlog.Infof("[PositionProcessor] Skipping duplicate trade: %s", e.TradeID)
-		return nil
-	}
-	pp.processedMu.Unlock()
+	// 对于事务化路径，由 outboxRepo 在事务内做原子幂等检查（ON CONFLICT DO NOTHING），无需进程内缓存
 
 	// 在事务内执行业务逻辑和 outbox 写入
 	alreadyProcessed := false
@@ -249,10 +296,7 @@ func (pp *PositionProcessor) handleTradeExecutedTransactional(e *model.TradeExec
 		return nil
 	}
 
-	// 标记为已处理（内存缓存），便于同一进程内快速跳过
-	pp.processedMu.Lock()
-	pp.processedTrades[e.TradeID] = true
-	pp.processedMu.Unlock()
+	// 对于带 outbox 的事务路径，不再依赖内存缓存；outbox 的存在已作为去重标记
 
 	hlog.Infof("[PositionProcessor] Updated position for trade: %s (taker: %s, maker: %s) with outbox",
 		e.TradeID, e.TakerUser, e.MakerUser)
