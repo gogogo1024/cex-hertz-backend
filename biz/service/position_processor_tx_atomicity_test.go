@@ -1,4 +1,4 @@
-package service
+package service_test
 
 import (
 	"testing"
@@ -6,6 +6,7 @@ import (
 
 	"github.com/gogogo1024/cex-hertz-backend/biz/dal/pg"
 	"github.com/gogogo1024/cex-hertz-backend/biz/model"
+	servicepkg "github.com/gogogo1024/cex-hertz-backend/biz/service"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -66,7 +67,7 @@ func TestPositionProcessor_TransactionalRollback(t *testing.T) {
 		return gorm.ErrInvalidTransaction
 	}
 
-	pp := NewPositionProcessorWithOutbox(db, outboxRepo, buyFn, sellFn)
+	pp := servicepkg.NewPositionProcessorWithOutbox(db, outboxRepo, buyFn, sellFn)
 
 	// 构造一个模拟成交事件：taker=buyer, maker=seller
 	e := &model.TradeExecutedEvent{
