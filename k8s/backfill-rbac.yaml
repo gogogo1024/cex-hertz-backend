@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backfill-runner
+  namespace: default
+
+---
+# Minimal Role granting read access to Secrets in the namespace.
+# The backfill job does not require Kubernetes API access by default, but
+# granting read-only secret access helps if the job needs to fetch secrets
+# via in-cluster API or if cluster policies require explicit RBAC.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: backfill-secret-reader
+  namespace: default
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: backfill-secret-reader-binding
+  namespace: default
+subjects:
+  - kind: ServiceAccount
+    name: backfill-runner
+    namespace: default
+roleRef:
+  kind: Role
+  name: backfill-secret-reader
+  apiGroup: rbac.authorization.k8s.io

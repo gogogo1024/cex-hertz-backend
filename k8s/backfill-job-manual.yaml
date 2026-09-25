@@ -10,7 +10,7 @@ spec:
       serviceAccountName: backfill-runner
       containers:
         - name: backfill
-          image: your-registry/cex-backfill:latest
+          image: snoy/cex-backfill:latest
           imagePullPolicy: IfNotPresent
           env:
             - name: PG_DSN
