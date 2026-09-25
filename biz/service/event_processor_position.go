@@ -22,9 +22,13 @@ import (
 //  3. 事务失败：两者都回滚（Case A 的源头）
 //  4. Checkpoint 后的 crash 被 outbox dispatcher 恢复（Case B 的缓解）
 type PositionProcessor struct {
-	// 用于记录已处理的 trade_id，防止重复处理
-	mu              sync.Mutex
+	// processedTrades 存储已处理的 trade_id，防止重复处理
+	// 使用独立的 mutex 保护 map 访问；并使用按 symbol 的锁以提高并发性
+	processedMu     sync.Mutex
 	processedTrades map[string]bool // trade_id -> 已处理
+
+	// 按 symbol 的锁集合：key=symbol -> *sync.Mutex
+	locks sync.Map // map[string]*sync.Mutex
 
 	// 实际的持仓更新函数（由外部提供）
 	// 现在支持事务化版本：tx-aware 函数签名
@@ -92,14 +96,20 @@ func (pp *PositionProcessor) ProcessorName() string {
 // handleTradeExecuted 处理成交事件
 // 注意：这是同步的，所以持仓更新会立即进行（与 matching 在同一事务边界内）
 func (pp *PositionProcessor) handleTradeExecuted(e *model.TradeExecutedEvent) error {
-	pp.mu.Lock()
-	defer pp.mu.Unlock()
+	// 获取对应 symbol 的锁以提高并发性
+	symbol := e.Symbol()
+	l := pp.getLockForSymbol(symbol)
+	l.Lock()
+	defer l.Unlock()
 
 	// 检查幂等性：是否已经处理过这个 trade
+	pp.processedMu.Lock()
 	if pp.processedTrades[e.TradeID] {
+		pp.processedMu.Unlock()
 		hlog.Infof("[PositionProcessor] Skipping duplicate trade: %s", e.TradeID)
 		return nil
 	}
+	pp.processedMu.Unlock()
 
 	// 转换为浮点数用于显示
 	quantityStr := fmt.Sprintf("%.8f", float64(e.Quantity)/1e8)
@@ -134,7 +144,9 @@ func (pp *PositionProcessor) handleTradeExecuted(e *model.TradeExecutedEvent) er
 	}
 
 	// 标记为已处理（幂等性保证）
+	pp.processedMu.Lock()
 	pp.processedTrades[e.TradeID] = true
+	pp.processedMu.Unlock()
 
 	hlog.Infof("[PositionProcessor] Updated position for trade: %s (taker: %s, maker: %s)",
 		e.TradeID, e.TakerUser, e.MakerUser)
@@ -152,14 +164,20 @@ func (pp *PositionProcessor) handleTradeExecuted(e *model.TradeExecutedEvent) er
 //  4. 事务提交或回滚
 //  5. Outbox dispatcher 异步读取并发布事件
 func (pp *PositionProcessor) handleTradeExecutedTransactional(e *model.TradeExecutedEvent) error {
-	pp.mu.Lock()
-	defer pp.mu.Unlock()
+	// 获取 symbol 的锁以允许跨 symbol 并发处理
+	symbol := e.Symbol()
+	l := pp.getLockForSymbol(symbol)
+	l.Lock()
+	defer l.Unlock()
 
 	// 检查幂等性：是否已经处理过这个 trade
+	pp.processedMu.Lock()
 	if pp.processedTrades[e.TradeID] {
+		pp.processedMu.Unlock()
 		hlog.Infof("[PositionProcessor] Skipping duplicate trade: %s", e.TradeID)
 		return nil
 	}
+	pp.processedMu.Unlock()
 
 	// 在事务内执行业务逻辑和 outbox 写入
 	alreadyProcessed := false
@@ -232,7 +250,9 @@ func (pp *PositionProcessor) handleTradeExecutedTransactional(e *model.TradeExec
 	}
 
 	// 标记为已处理（内存缓存），便于同一进程内快速跳过
+	pp.processedMu.Lock()
 	pp.processedTrades[e.TradeID] = true
+	pp.processedMu.Unlock()
 
 	hlog.Infof("[PositionProcessor] Updated position for trade: %s (taker: %s, maker: %s) with outbox",
 		e.TradeID, e.TakerUser, e.MakerUser)
@@ -242,7 +262,19 @@ func (pp *PositionProcessor) handleTradeExecutedTransactional(e *model.TradeExec
 
 // Reset 重置幂等性记录（仅用于测试）
 func (pp *PositionProcessor) Reset() {
-	pp.mu.Lock()
-	defer pp.mu.Unlock()
+	// Reset processed trades map
+	pp.processedMu.Lock()
+	defer pp.processedMu.Unlock()
 	pp.processedTrades = make(map[string]bool)
+}
+
+// getLockForSymbol 返回某个 symbol 对应的 mutex（缓存于 sync.Map）
+func (pp *PositionProcessor) getLockForSymbol(symbol string) *sync.Mutex {
+	if symbol == "" {
+		// fallback: use a global anonymous lock if symbol empty
+		m := &sync.Mutex{}
+		return m
+	}
+	actual, _ := pp.locks.LoadOrStore(symbol, &sync.Mutex{})
+	return actual.(*sync.Mutex)
 }
