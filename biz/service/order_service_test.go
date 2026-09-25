@@ -9,6 +9,11 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	// Allow skipping Postgres init for local isolated tests by setting env SKIP_PG_TEST_MAIN=1
+	if os.Getenv("SKIP_PG_TEST_MAIN") == "1" {
+		code := m.Run()
+		os.Exit(code)
+	}
 	// 初始化数据库连接
 	if err := pg.InitGorm(); err != nil {
 		panic("GORM DB 初始化失败: " + err.Error())
