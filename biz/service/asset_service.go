@@ -2,7 +2,7 @@ package service
 
 import (
 	"fmt"
-	"strconv"
+	"math/big"
 
 	"github.com/gogogo1024/cex-hertz-backend/biz/dal/pg"
 	"github.com/gogogo1024/cex-hertz-backend/biz/model"
@@ -41,14 +41,22 @@ func SellPosition(userID, symbol, sellQty string) error {
 }
 
 // BuyPositionTx 在给定事务/DB 对象上执行持仓买入逻辑（便于在事务中调用）
-func BuyPositionTx(tx *gorm.DB, userID, symbol, buyQty, buyPrice string) error {
+// 使用整数纳单位并用大整数计算加权均价以避免 overflow/浮点误差
+func BuyPositionTx(tx *gorm.DB, userID, symbol, buyQtyStr, buyPriceStr string) error {
 	var pos model.Position
-	err := tx.Where("user_id = ? AND symbol = ?", userID, symbol).First(&pos).Error
-	buyQtyF, _ := strconv.ParseFloat(buyQty, 64)
-	buyPriceF, _ := strconv.ParseFloat(buyPrice, 64)
-	switch err {
-	case gorm.ErrRecordNotFound:
-		// 新持仓
+	queryErr := tx.Where("user_id = ? AND symbol = ?", userID, symbol).First(&pos).Error
+
+	buyQty, err := model.ParseQuantity(buyQtyStr)
+	if err != nil {
+		return err
+	}
+	buyPrice, err := model.ParsePrice(buyPriceStr)
+	if err != nil {
+		return err
+	}
+
+	if queryErr == gorm.ErrRecordNotFound {
+		// 新持仓，直接创建（使用纳单位）
 		pos = model.Position{
 			UserID:   userID,
 			Symbol:   symbol,
@@ -56,36 +64,61 @@ func BuyPositionTx(tx *gorm.DB, userID, symbol, buyQty, buyPrice string) error {
 			AvgPrice: buyPrice,
 		}
 		return tx.Create(&pos).Error
-	case nil:
-		// 加权均价
-		oldQty, _ := strconv.ParseFloat(pos.Volume, 64)
-		oldAvg, _ := strconv.ParseFloat(pos.AvgPrice, 64)
-		newQty := oldQty + buyQtyF
-		newAvg := (oldQty*oldAvg + buyQtyF*buyPriceF) / newQty
-		pos.Volume = strconv.FormatFloat(newQty, 'f', -1, 64)
-		pos.AvgPrice = strconv.FormatFloat(newAvg, 'f', -1, 64)
-		return tx.Save(&pos).Error
 	}
-	return err
+	if queryErr != nil {
+		return queryErr
+	}
+
+	// 已有持仓，计算加权均价：newAvg = (oldQty*oldAvg + buyQty*buyPrice) / (oldQty + buyQty)
+	oldQty := pos.Volume
+	oldAvg := pos.AvgPrice
+	newQty := model.QuantityInNano(int64(oldQty) + int64(buyQty))
+
+	bigOldQty := new(big.Int).SetInt64(int64(oldQty))
+	bigOldAvg := new(big.Int).SetInt64(int64(oldAvg))
+	bigBuyQty := new(big.Int).SetInt64(int64(buyQty))
+	bigBuyPrice := new(big.Int).SetInt64(int64(buyPrice))
+
+	prod1 := new(big.Int).Mul(bigOldQty, bigOldAvg)
+	prod2 := new(big.Int).Mul(bigBuyQty, bigBuyPrice)
+	sum := new(big.Int).Add(prod1, prod2)
+	bigNewQty := new(big.Int).SetInt64(int64(newQty))
+	if bigNewQty.Sign() == 0 {
+		return fmt.Errorf("new quantity is zero")
+	}
+	newAvgBig := new(big.Int).Div(sum, bigNewQty)
+	if !newAvgBig.IsInt64() {
+		return fmt.Errorf("price overflow when computing weighted average")
+	}
+
+	pos.Volume = newQty
+	pos.AvgPrice = model.PriceInNano(newAvgBig.Int64())
+	return tx.Save(&pos).Error
 }
 
 // SellPositionTx 在给定事务/DB 对象上执行持仓卖出逻辑（便于在事务中调用）
-func SellPositionTx(tx *gorm.DB, userID, symbol, sellQty string) error {
+// 使用整数纳单位
+func SellPositionTx(tx *gorm.DB, userID, symbol, sellQtyStr string) error {
 	var pos model.Position
-	err := tx.Where("user_id = ? AND symbol = ?", userID, symbol).First(&pos).Error
-	sellQtyF, _ := strconv.ParseFloat(sellQty, 64)
+	queryErr := tx.Where("user_id = ? AND symbol = ?", userID, symbol).First(&pos).Error
+	if queryErr != nil {
+		return queryErr
+	}
+
+	sellQty, err := model.ParseQuantity(sellQtyStr)
 	if err != nil {
 		return err
 	}
-	oldQty, _ := strconv.ParseFloat(pos.Volume, 64)
-	newQty := oldQty - sellQtyF
-	if newQty < 0 {
+
+	oldQty := pos.Volume
+	if int64(oldQty) < int64(sellQty) {
 		return fmt.Errorf("持仓不足")
 	}
-	pos.Volume = strconv.FormatFloat(newQty, 'f', -1, 64)
-	// 卖出均价不变
+	newQty := model.QuantityInNano(int64(oldQty) - int64(sellQty))
+	pos.Volume = newQty
+	// 卖出后均价不变，除非持仓为 0，则重置均价
 	if newQty == 0 {
-		pos.AvgPrice = "0"
+		pos.AvgPrice = model.PriceInNano(0)
 	}
 	return tx.Save(&pos).Error
 }
