@@ -57,8 +57,7 @@ func TestPositionProcessor_TransactionalRollback(t *testing.T) {
 		return tx.Save(&pos).Error
 	}
 
-	// sellPositionFn 故意在第一次调用时返回错误以触发回滚
-	var firstSellCall int32
+	// sellPositionFn 故意返回错误以触发回滚
 	sellFn := func(tx *gorm.DB, userID, symbol, quantity string) error {
 		if tx == nil {
 			tx = db
