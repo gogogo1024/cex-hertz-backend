@@ -1,0 +1,45 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: positions-backfill
+  namespace: default
+spec:
+  # schedule in cron format (example: daily at 02:00)
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid
+  failedJobsHistoryLimit: 3
+  successfulJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      template:
+        spec:
+          serviceAccountName: backfill-runner
+          containers:
+            - name: backfill
+              image: your-registry/cex-backfill:latest
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: PG_DSN
+                  valueFrom:
+                    secretKeyRef:
+                      name: db-credentials
+                      key: pg_dsn
+              args:
+                - "-batch"
+                - "500"
+                - "-throttle"
+                - "100"
+                - "-dry-run=false"
+                - "-checkpoint-table"
+                - "backfill_checkpoints"
+                - "-job-name"
+                - "positions_backfill"
+              resources:
+                limits:
+                  cpu: "500m"
+                  memory: "512Mi"
+                requests:
+                  cpu: "100m"
+                  memory: "128Mi"
+          restartPolicy: OnFailure
