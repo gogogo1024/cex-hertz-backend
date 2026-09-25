@@ -56,12 +56,14 @@ func BuyPositionTx(tx *gorm.DB, userID, symbol, buyQtyStr, buyPriceStr string) e
 	}
 
 	if queryErr == gorm.ErrRecordNotFound {
-		// 新持仓，直接创建（使用纳单位）
+		// 新持仓，双写（兼容旧列与新 bigint 列）
 		pos = model.Position{
-			UserID:   userID,
-			Symbol:   symbol,
-			Volume:   buyQty,
-			AvgPrice: buyPrice,
+			UserID:      userID,
+			Symbol:      symbol,
+			Volume:      buyQty,
+			AvgPrice:    buyPrice,
+			VolumeStr:   buyQtyStr,
+			AvgPriceStr: buyPriceStr,
 		}
 		return tx.Create(&pos).Error
 	}
@@ -69,13 +71,34 @@ func BuyPositionTx(tx *gorm.DB, userID, symbol, buyQtyStr, buyPriceStr string) e
 		return queryErr
 	}
 
-	// 已有持仓，计算加权均价：newAvg = (oldQty*oldAvg + buyQty*buyPrice) / (oldQty + buyQty)
-	oldQty := pos.Volume
-	oldAvg := pos.AvgPrice
-	newQty := model.QuantityInNano(int64(oldQty) + int64(buyQty))
+	// 已有持仓，优先使用 bigint 列的值，若不存在则回退解析旧字符串列
+	var oldQty model.QuantityInNano
+	var oldAvg model.PriceInNano
+	if pos.Volume != 0 {
+		oldQty = pos.Volume
+	} else {
+		if pos.VolumeStr != "" {
+			if q, err := model.ParseQuantity(pos.VolumeStr); err == nil {
+				oldQty = q
+			}
+		}
+	}
+	if pos.AvgPrice != 0 {
+		oldAvg = pos.AvgPrice
+	} else {
+		if pos.AvgPriceStr != "" {
+			if p, err := model.ParsePrice(pos.AvgPriceStr); err == nil {
+				oldAvg = p
+			}
+		}
+	}
+	// 计算新值（纳单位）
+	oldQtyVal := oldQty
+	oldAvgVal := oldAvg
+	newQty := model.QuantityInNano(int64(oldQtyVal) + int64(buyQty))
 
-	bigOldQty := new(big.Int).SetInt64(int64(oldQty))
-	bigOldAvg := new(big.Int).SetInt64(int64(oldAvg))
+	bigOldQty := new(big.Int).SetInt64(int64(oldQtyVal))
+	bigOldAvg := new(big.Int).SetInt64(int64(oldAvgVal))
 	bigBuyQty := new(big.Int).SetInt64(int64(buyQty))
 	bigBuyPrice := new(big.Int).SetInt64(int64(buyPrice))
 
@@ -91,8 +114,13 @@ func BuyPositionTx(tx *gorm.DB, userID, symbol, buyQtyStr, buyPriceStr string) e
 		return fmt.Errorf("price overflow when computing weighted average")
 	}
 
+	newAvg := model.PriceInNano(newAvgBig.Int64())
+
+	// 双写：更新 bigint 列和旧字符串列
 	pos.Volume = newQty
-	pos.AvgPrice = model.PriceInNano(newAvgBig.Int64())
+	pos.AvgPrice = newAvg
+	pos.VolumeStr = newQty.String()
+	pos.AvgPriceStr = newAvg.String()
 	return tx.Save(&pos).Error
 }
 
@@ -110,15 +138,27 @@ func SellPositionTx(tx *gorm.DB, userID, symbol, sellQtyStr string) error {
 		return err
 	}
 
-	oldQty := pos.Volume
+	// 优先使用 bigint 列，回退解析旧字符串列
+	var oldQty model.QuantityInNano
+	if pos.Volume != 0 {
+		oldQty = pos.Volume
+	} else if pos.VolumeStr != "" {
+		if q, err := model.ParseQuantity(pos.VolumeStr); err == nil {
+			oldQty = q
+		}
+	}
+
 	if int64(oldQty) < int64(sellQty) {
 		return fmt.Errorf("持仓不足")
 	}
 	newQty := model.QuantityInNano(int64(oldQty) - int64(sellQty))
+
 	pos.Volume = newQty
+	pos.VolumeStr = newQty.String()
 	// 卖出后均价不变，除非持仓为 0，则重置均价
 	if newQty == 0 {
 		pos.AvgPrice = model.PriceInNano(0)
+		pos.AvgPriceStr = "0"
 	}
 	return tx.Save(&pos).Error
 }
