@@ -19,11 +19,11 @@ type Position struct {
 	ID     uint   `gorm:"primaryKey"`
 	UserID string `gorm:"index;not null"`
 	Symbol string `gorm:"index;not null"` // 交易对
-	// 兼容旧列（字符串）和新列（bigint 纳单位），当前处于双写阶段：
-	// - `volume` / `avg_price` 保留旧字符串表示（兼容旧读）
-	// - `volume_bigint` / `avg_price_bigint` 为新的整数纳单位表示
-	VolumeStr   string         `gorm:"column:volume;type:text;not null"`             // 旧列：持仓数量（字符串）
-	AvgPriceStr string         `gorm:"column:avg_price;type:text;not null"`          // 旧列：持仓均价（字符串）
-	Volume      QuantityInNano `gorm:"column:volume_bigint;type:bigint;not null"`    // 新列：持仓数量（纳单位）
-	AvgPrice    PriceInNano    `gorm:"column:avg_price_bigint;type:bigint;not null"` // 新列：持仓均价（纳单位）
+	// 兼容双写阶段：保留旧列（字符串）并新增 bigint 列（纳单位）
+	Volume   string `gorm:"column:volume;type:text;not null"`    // 旧列：持仓数量（字符串表示）
+	AvgPrice string `gorm:"column:avg_price;type:text;not null"` // 旧列：持仓均价（字符串表示）
+
+	// 新列：纳单位整数（用于消除浮点误差）
+	VolumeBigint   QuantityInNano `gorm:"column:volume_bigint;type:bigint;default:0"`
+	AvgPriceBigint PriceInNano    `gorm:"column:avg_price_bigint;type:bigint;default:0"`
 }
