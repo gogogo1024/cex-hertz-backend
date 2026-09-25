@@ -52,11 +52,23 @@ func AutoMigrate() error {
 	if GormDB == nil {
 		return gorm.ErrInvalidDB
 	}
-	return GormDB.AutoMigrate(
+	// Auto-migrate core models and outbox/processed tables
+	if err := GormDB.AutoMigrate(
 		&model.Order{},
 		&model.Trade{},
 		&model.EventOffsetCheckpoint{}, // Event Sourcing V2: Crash recovery checkpoint表
-	)
+		&model.OutboxEntry{},
+		&model.ProcessedTrade{},
+		&model.Position{},
+	); err != nil {
+		return err
+	}
+
+	// Ensure migration helper columns exist for zero-downtime migration
+	// (these are idempotent and safe to run on startup)
+	_ = GormDB.Exec("ALTER TABLE positions ADD COLUMN IF NOT EXISTS volume_bigint bigint;")
+	_ = GormDB.Exec("ALTER TABLE positions ADD COLUMN IF NOT EXISTS avg_price_bigint bigint;")
+	return nil
 }
 func GetPool() *pgxpool.Pool {
 	if PostgresClient == nil {
